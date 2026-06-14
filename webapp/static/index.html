@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>KBO 선수 분석</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>KBO 선수 분석</h1>
+          <p id="statusLine">라인업과 상대 기록을 불러오는 중</p>
+          <p id="cacheLine" class="meta-line"></p>
+          <p id="networkLine" class="meta-line"></p>
+        </div>
+        <form id="controls" class="controls">
+          <label>
+            <span>날짜</span>
+            <input id="dateInput" type="date" name="date">
+          </label>
+          <div class="quick-nav-stack">
+            <div id="gameQuickNav" class="game-quick-nav" aria-label="선택 날짜 경기 바로가기"></div>
+            <div id="teamQuickNav" class="team-quick-nav" aria-label="팀 바로가기"></div>
+          </div>
+          <label hidden>
+            <span>팀</span>
+            <select id="teamSelect" name="team">
+              <option value="NC" selected>NC</option>
+              <option value="KIA">기아</option>
+              <option value="한화">한화</option>
+              <option value="LG">LG</option>
+              <option value="KT">KT</option>
+              <option value="삼성">삼성</option>
+              <option value="두산">두산</option>
+              <option value="SSG">SSG</option>
+              <option value="롯데">롯데</option>
+              <option value="키움">키움</option>
+              <option value="">전체</option>
+            </select>
+          </label>
+          <details class="settings-menu">
+            <summary>설정</summary>
+            <div class="settings-panel">
+              <label class="checkline">
+                <input id="autoRefresh" type="checkbox" name="autoRefresh" checked>
+                <span>경기 중 자동 갱신</span>
+              </label>
+              <label class="checkline">
+                <input id="refreshHistory" type="checkbox" name="refreshHistory">
+                <span>3년 기록 갱신</span>
+              </label>
+              <button id="refreshTodayStats" class="secondary-button" type="button">오늘 선수성적 갱신</button>
+            </div>
+          </details>
+          <button id="refreshGameButton" class="secondary-button" type="button">경기상황</button>
+          <button type="submit">조회</button>
+        </form>
+      </header>
+
+      <section id="errorBox" class="error-box" hidden></section>
+      <section id="gameStrip" class="game-strip" hidden></section>
+      <section id="teamStats" class="team-stats" hidden></section>
+      <section id="teams" class="team-grid" aria-live="polite"></section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
