@@ -54,7 +54,7 @@ print_web_urls() {
   echo "KBO 웹앱을 실행합니다."
   echo "  로컬 접속: http://127.0.0.1:${port}/"
   if [[ "$host" == "0.0.0.0" ]]; then
-    echo "  같은 Wi-Fi의 휴대폰/태블릿:"
+    echo "  같은 Wi-Fi의 웹 접속:"
     while IFS= read -r ip; do
       [[ -z "$ip" ]] && continue
       echo "    http://${ip}:${port}/"

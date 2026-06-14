@@ -968,6 +968,17 @@ th.num {
   min-width: 1350px;
 }
 
+.roster-hitter-table tbody td.stat-ab:nth-child(4),
+.roster-hitter-table thead .sub-head th:nth-child(2),
+.recent-season-table:not(.roster-hitter-table) tbody td.stat-ab:nth-child(6),
+.recent-season-table:not(.roster-hitter-table) thead .sub-head th:nth-child(4) {
+  width: 30px;
+  min-width: 30px;
+  max-width: 30px;
+  padding-left: 3px;
+  padding-right: 3px;
+}
+
 .pitcher-roster-table {
   min-width: 1980px;
 }
