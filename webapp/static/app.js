@@ -797,6 +797,7 @@ function renderGameStrip(data) {
   const games = Array.isArray(data.games) ? data.games : [];
   if (!games.length) {
     gameStrip.hidden = true;
+    gameStrip.innerHTML = "";
     return;
   }
   gameStrip.hidden = false;
@@ -898,8 +899,9 @@ function quickGameMeta(game) {
 }
 
 function renderGameQuickNav(games = quickGames) {
-  const visibleGames = Array.isArray(games) ? games.slice(0, 5) : [];
-  if (!visibleGames.length) {
+  const allGames = Array.isArray(games) ? games : [];
+  const visibleGames = allGames.slice(0, 5);
+  if (!allGames.length) {
     gameQuickNav.hidden = true;
     gameQuickNav.innerHTML = "";
     return;
@@ -916,7 +918,7 @@ function renderGameQuickNav(games = quickGames) {
       title="전체 경기"
     >
       <span>전체</span>
-      <small>${escapeHtml(visibleGames.length)}경기</small>
+      <small>${escapeHtml(allGames.length)}경기</small>
     </button>
   `;
   const gameButtons = visibleGames.map((game) => {
