@@ -410,7 +410,9 @@ def fetch_schedule_meta_cached(
     cache: DailyStatsCache | None,
     use_daily_cache: bool = True,
 ) -> dict[str, dict[str, Any]]:
-    if use_daily_cache:
+    # Today's schedule carries live inning/score/pitcher state, so stale daily
+    # cache must not overwrite fresh game status during the full records pass.
+    if use_daily_cache and target_date < kst_today():
         cached = cached_schedule_meta(cache, target_date)
         if cached is not None:
             return {str(key): value for key, value in cached.items() if isinstance(value, dict)}
