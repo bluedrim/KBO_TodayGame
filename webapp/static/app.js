@@ -1271,30 +1271,7 @@ function renderTeamStats(data) {
   }
   teamStats.hidden = false;
   teamStats.innerHTML = `
-    ${overviewMode ? renderTeamOverviewStats(rows) : `
-    <table>
-      <thead>
-        <tr>
-          <th>순위</th>
-          <th>팀</th>
-          <th>전체</th>
-          <th>타격</th>
-          <th>투수</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map((stats) => `
-          <tr>
-            <td class="num">${escapeHtml(stats.ranking ?? "-")}</td>
-            <td><strong>${escapeHtml(stats.teamName || stats.teamShortName || "-")}</strong></td>
-            <td>${escapeHtml(teamOverall(stats))}</td>
-            <td class="stat">${escapeHtml(teamBatting(stats))}</td>
-            <td class="stat">${escapeHtml(teamPitching(stats))}</td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-    `}
+    ${renderTeamOverviewStats(rows)}
     ${overviewMode ? renderLeagueCategoryLeaders(data) : ""}
     ${overviewMode ? renderLeaguePlayerLeaders(data) : ""}
   `;
