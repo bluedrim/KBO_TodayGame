@@ -873,6 +873,30 @@ function isSelectedGame(game) {
   return false;
 }
 
+function hasGameScore(game) {
+  return game?.away_score !== undefined
+    && game?.away_score !== null
+    && game?.home_score !== undefined
+    && game?.home_score !== null;
+}
+
+function gameScoreText(game) {
+  return hasGameScore(game) ? `${game.away_score} : ${game.home_score}` : "";
+}
+
+function quickGameMeta(game) {
+  if (isCancelledGame(game)) {
+    return [game.time, "취소"].filter(Boolean).join(" · ") || "취소";
+  }
+
+  const status = game.status || "";
+  if (isScoredGame(game) && hasGameScore(game)) {
+    return [status, gameScoreText(game)].filter(Boolean).join(" · ");
+  }
+
+  return [game.time, status].filter(Boolean).join(" · ") || "경기";
+}
+
 function renderGameQuickNav(games = quickGames) {
   const visibleGames = Array.isArray(games) ? games.slice(0, 5) : [];
   if (!visibleGames.length) {
@@ -898,7 +922,7 @@ function renderGameQuickNav(games = quickGames) {
   const gameButtons = visibleGames.map((game) => {
     const teamValue = gameJumpTeam(game);
     const label = `${game.away_team || "-"} @ ${game.home_team || "-"}`;
-    const meta = [game.time, game.status].filter(Boolean).join(" · ") || "경기";
+    const meta = quickGameMeta(game);
     const active = isSelectedGame(game) ? " active" : "";
     return `
       <button

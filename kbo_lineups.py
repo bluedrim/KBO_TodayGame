@@ -57,6 +57,8 @@ class GameRef:
     status_code: str = ""
     canceled: bool = False
     suspended: bool = False
+    away_score: Any = None
+    home_score: Any = None
 
 
 @dataclass
@@ -174,6 +176,8 @@ def fetch_games(target_date: str) -> list[GameRef]:
                 status_code=status_code,
                 canceled=canceled,
                 suspended=suspended,
+                away_score=raw.get("awayTeamScore"),
+                home_score=raw.get("homeTeamScore"),
             )
         )
 

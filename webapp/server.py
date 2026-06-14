@@ -1071,17 +1071,30 @@ def is_cancelled_game_ref(game: Any) -> bool:
     )
 
 
+def display_game_status(status: Any, status_code: Any = "", canceled: bool = False) -> str:
+    status_text = str(status or "")
+    code = str(status_code or "").upper()
+    if canceled or "취소" in status_text or code in CANCEL_STATUS_CODES:
+        return "취소"
+    if code in RESULT_STATUS_CODES:
+        return "종료"
+    return status_text or code or "-"
+
+
 def game_summary(game: Any) -> dict[str, Any]:
     canceled = is_cancelled_game_ref(game)
+    status_code = getattr(game, "status_code", "") or ""
     return {
         "game_id": game.game_id,
         "date": game.date,
         "time": game.time,
         "stadium": game.stadium,
-        "status": "취소" if canceled else game.status,
-        "status_code": getattr(game, "status_code", "") or "",
+        "status": display_game_status(game.status, status_code, canceled),
+        "status_code": status_code,
         "canceled": canceled,
         "suspended": bool(getattr(game, "suspended", False)),
+        "away_score": getattr(game, "away_score", None),
+        "home_score": getattr(game, "home_score", None),
         "away_code": game.away_code,
         "home_code": game.home_code,
         "away_team": game.away_name,
@@ -2331,7 +2344,11 @@ def scoreboard_from_record(
 
     return {
         "visible": visible,
-        "status": (meta or {}).get("statusInfo") or game.get("status"),
+        "status": display_game_status(
+            (meta or {}).get("statusInfo") or game.get("status"),
+            (meta or {}).get("statusCode") or game.get("status_code"),
+            is_cancelled_game(game, meta),
+        ),
         "columns": [str(index + 1) for index in range(column_count)],
         "teams": [
             side_row("away", away_scores),
@@ -2372,8 +2389,13 @@ def enrich_live_context(
         game_id = str(game.get("game_id") or "")
         meta = schedule.get(game_id)
         if meta:
-            game["status_code"] = meta.get("statusCode")
-            game["status"] = meta.get("statusInfo") or game.get("status")
+            status_code = meta.get("statusCode") or game.get("status_code")
+            game["status_code"] = status_code
+            game["status"] = display_game_status(
+                meta.get("statusInfo") or game.get("status"),
+                status_code,
+                is_cancelled_game(game, meta),
+            )
             game["away_score"] = meta.get("awayTeamScore")
             game["home_score"] = meta.get("homeTeamScore")
             game["away_current_pitcher_name"] = meta.get("awayCurrentPitcherName")
