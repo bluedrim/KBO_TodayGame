@@ -723,11 +723,19 @@ function totalScore(value) {
   return value === null || value === undefined || value === "" ? "-" : String(value);
 }
 
+function isCancelledGame(game) {
+  const status = String(game?.status || "");
+  const code = String(game?.status_code || "").toUpperCase();
+  return Boolean(game?.canceled || status.includes("취소") || ["CANCEL", "CANCELED", "CANCELLED"].includes(code));
+}
+
 function isScoredGame(game) {
+  if (isCancelledGame(game)) return false;
   return game?.scoreboard?.visible || ["STARTED", "RESULT", "2", "4"].includes(String(game?.status_code || "").toUpperCase());
 }
 
 function scoreChip(game) {
+  if (isCancelledGame(game)) return "취소";
   if (!isScoredGame(game) || game.away_score === undefined || game.home_score === undefined) {
     return game.status || "-";
   }
@@ -1423,7 +1431,8 @@ function renderTeams(data) {
     if (rosterView === "pitchers") teamsRoot.dataset.mobileSection = "matchup";
   }
   if (!teams.length) {
-    teamsRoot.innerHTML = `<div class="empty-state">표시할 팀 정보가 없습니다.</div>`;
+    const hasCancelledGame = (data.games || []).some((game) => isCancelledGame(game));
+    teamsRoot.innerHTML = `<div class="empty-state">${hasCancelledGame ? "취소된 경기입니다." : "표시할 팀 정보가 없습니다."}</div>`;
     return;
   }
   teamsRoot.innerHTML = teams.map((team) => renderTeamPanel(team, data)).join("");

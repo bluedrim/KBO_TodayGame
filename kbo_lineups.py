@@ -54,6 +54,9 @@ class GameRef:
     stadium: str
     status: str
     time: str
+    status_code: str = ""
+    canceled: bool = False
+    suspended: bool = False
 
 
 @dataclass
@@ -150,8 +153,12 @@ def fetch_games(target_date: str) -> list[GameRef]:
     for raw in data.get("result", {}).get("games", []):
         if raw.get("categoryId") != "kbo":
             continue
-        if raw.get("cancel") or raw.get("suspended"):
-            continue
+
+        status_info = str(raw.get("statusInfo") or "")
+        status_code = str(raw.get("statusCode") or "")
+        canceled = bool(raw.get("cancel")) or "취소" in status_info or status_code.upper() in {"CANCEL", "CANCELED", "CANCELLED"}
+        suspended = bool(raw.get("suspended"))
+        status = "취소" if canceled else status_info or status_code
 
         games.append(
             GameRef(
@@ -162,8 +169,11 @@ def fetch_games(target_date: str) -> list[GameRef]:
                 away_code=raw.get("awayTeamCode", ""),
                 away_name=raw.get("awayTeamName", ""),
                 stadium=raw.get("stadium", ""),
-                status=raw.get("statusInfo") or raw.get("statusCode", ""),
+                status=status,
                 time=(raw.get("gameDateTime") or "").split("T")[-1][:5],
+                status_code=status_code,
+                canceled=canceled,
+                suspended=suspended,
             )
         )
 
@@ -617,6 +627,7 @@ def game_ref_from_preview(preview: dict[str, Any], fallback_game_id: str = "") -
         stadium=info.get("stadium", ""),
         status=str(info.get("statusCode", "")),
         time=info.get("gtime", ""),
+        status_code=str(info.get("statusCode", "")),
     )
 
 

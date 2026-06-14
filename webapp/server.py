@@ -61,6 +61,7 @@ KBO_HITTER_SITUATION_URL = "https://www.koreabaseball.com/Record/Player/HitterBa
 PLAYER_STATS_PAGE_SIZE = 100
 LIVE_STATUS_CODES = {"STARTED", "2"}
 RESULT_STATUS_CODES = {"RESULT", "4"}
+CANCEL_STATUS_CODES = {"CANCEL", "CANCELED", "CANCELLED"}
 MAX_FETCH_WORKERS = 12
 DAILY_STATS_CACHE = ROOT_DIR / ".cache" / "kbo_web_daily_stats.json"
 DAILY_STATS_CACHE_SCHEMA_VERSION = 1
@@ -396,8 +397,6 @@ def fetch_schedule_meta(target_date: str) -> dict[str, dict[str, Any]]:
     games: dict[str, dict[str, Any]] = {}
     for raw in data.get("result", {}).get("games", []):
         if not isinstance(raw, dict) or raw.get("categoryId") != "kbo":
-            continue
-        if raw.get("cancel") or raw.get("suspended"):
             continue
         game_id = str(raw.get("gameId") or "")
         if game_id:
@@ -938,6 +937,34 @@ def collect_team_roster(
     }
 
 
+def is_cancelled_game_ref(game: Any) -> bool:
+    status = str(getattr(game, "status", "") or "")
+    status_code = str(getattr(game, "status_code", "") or "").upper()
+    return bool(
+        getattr(game, "canceled", False)
+        or "취소" in status
+        or status_code in {"CANCEL", "CANCELED", "CANCELLED"}
+    )
+
+
+def game_summary(game: Any) -> dict[str, Any]:
+    canceled = is_cancelled_game_ref(game)
+    return {
+        "game_id": game.game_id,
+        "date": game.date,
+        "time": game.time,
+        "stadium": game.stadium,
+        "status": "취소" if canceled else game.status,
+        "status_code": getattr(game, "status_code", "") or "",
+        "canceled": canceled,
+        "suspended": bool(getattr(game, "suspended", False)),
+        "away_code": game.away_code,
+        "home_code": game.home_code,
+        "away_team": game.away_name,
+        "home_team": game.home_name,
+    }
+
+
 def collect_selected_game_lineups(
     target_date: str,
     team_query: str | None,
@@ -971,13 +998,26 @@ def collect_selected_game_lineups(
     teams = []
     game_results = []
     for game in selected_games:
-        preview = fetch_preview(game.game_id)
+        summary = game_summary(game)
+        try:
+            preview = fetch_preview(game.game_id)
+        except KboLineupError:
+            if summary["canceled"]:
+                game_results.append(summary)
+                continue
+            raise
+
         away = build_team_lineup(preview, game, "away")
         home = build_team_lineup(preview, game, "home")
         away["game_id"] = game.game_id
         away["side"] = "away"
         home["game_id"] = game.game_id
         home["side"] = "home"
+        if summary["canceled"]:
+            away["status"] = "취소"
+            away["note"] = "경기 취소"
+            home["status"] = "취소"
+            home["note"] = "경기 취소"
 
         season_vs_result = preview.get("seasonVsResult")
         season_vs_result = season_vs_result if isinstance(season_vs_result, dict) else None
@@ -985,19 +1025,7 @@ def collect_selected_game_lineups(
         attach_team_context(home, away, team_stats_by_code, season_vs_result, "home")
         game_pairs.append((away, home))
         teams.extend([away, home])
-        game_results.append(
-            {
-                "game_id": game.game_id,
-                "date": game.date,
-                "time": game.time,
-                "stadium": game.stadium,
-                "status": game.status,
-                "away_code": game.away_code,
-                "home_code": game.home_code,
-                "away_team": game.away_name,
-                "home_team": game.home_name,
-            }
-        )
+        game_results.append(summary)
 
     history_cache = load_history_cache(history_cache_path) if include_player_records else None
     record_cache: dict[str, dict[str, Any]] = {}
@@ -1048,20 +1076,7 @@ def collect_games_for_date(target_date: str) -> dict[str, Any]:
     return {
         "target_date": target_date,
         "generated_at": now_kst_iso(),
-        "games": [
-            {
-                "game_id": game.game_id,
-                "date": game.date,
-                "time": game.time,
-                "stadium": game.stadium,
-                "status": game.status,
-                "away_code": game.away_code,
-                "away_team": game.away_name,
-                "home_code": game.home_code,
-                "home_team": game.home_name,
-            }
-            for game in games
-        ],
+        "games": [game_summary(game) for game in games],
     }
 
 
@@ -1137,7 +1152,25 @@ def is_result_game(meta: dict[str, Any] | None) -> bool:
     return str(meta.get("statusCode") or "").upper() in RESULT_STATUS_CODES or str(meta.get("statusNum") or "") == "4"
 
 
+def is_cancelled_meta(meta: dict[str, Any] | None) -> bool:
+    if not meta:
+        return False
+    status_info = str(meta.get("statusInfo") or "")
+    status_code = str(meta.get("statusCode") or "").upper()
+    return bool(meta.get("cancel") or "취소" in status_info or status_code in CANCEL_STATUS_CODES)
+
+
+def is_cancelled_game(game: dict[str, Any] | None, meta: dict[str, Any] | None = None) -> bool:
+    if not isinstance(game, dict):
+        return is_cancelled_meta(meta)
+    status = str(game.get("status") or "")
+    status_code = str(game.get("status_code") or "").upper()
+    return bool(game.get("canceled") or "취소" in status or status_code in CANCEL_STATUS_CODES or is_cancelled_meta(meta))
+
+
 def should_show_scoreboard(target_date: str, meta: dict[str, Any] | None) -> bool:
+    if is_cancelled_meta(meta):
+        return False
     if is_live_game(meta) or is_result_game(meta):
         return True
     return target_date < kst_today()
@@ -2221,6 +2254,12 @@ def enrich_live_context(
             game["home_score"] = meta.get("homeTeamScore")
             game["away_current_pitcher_name"] = meta.get("awayCurrentPitcherName")
             game["home_current_pitcher_name"] = meta.get("homeCurrentPitcherName")
+
+        if is_cancelled_game(game, meta):
+            game["canceled"] = True
+            game["status"] = "취소"
+            game["status_code"] = game.get("status_code") or (meta or {}).get("statusCode") or "CANCEL"
+            continue
 
         visible_scoreboard = should_show_scoreboard(target_date, meta)
         record: dict[str, Any] | None = None
