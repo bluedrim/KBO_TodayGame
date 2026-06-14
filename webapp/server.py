@@ -62,6 +62,7 @@ PLAYER_STATS_PAGE_SIZE = 100
 LIVE_STATUS_CODES = {"STARTED", "2"}
 RESULT_STATUS_CODES = {"RESULT", "4"}
 CANCEL_STATUS_CODES = {"CANCEL", "CANCELED", "CANCELLED"}
+TEAM_OVERVIEW_QUERY = "__teams__"
 MAX_FETCH_WORKERS = 12
 DAILY_STATS_CACHE = ROOT_DIR / ".cache" / "kbo_web_daily_stats.json"
 DAILY_STATS_CACHE_SCHEMA_VERSION = 1
@@ -762,25 +763,112 @@ def find_team_stats(team_stats_by_code: dict[str, dict[str, Any]], team_query: s
     raise KboLineupError(f"팀 정보를 찾지 못했습니다: {team_query}")
 
 
-def fetch_team_player_stats(season_year: int | str, team_code: str, player_type: str) -> list[dict[str, Any]]:
+def fetch_team_player_stats(
+    season_year: int | str,
+    team_code: str,
+    player_type: str,
+    page_size: int = PLAYER_STATS_PAGE_SIZE,
+    sort_field: str | None = None,
+    sort_direction: str | None = None,
+) -> list[dict[str, Any]]:
     player_type = player_type.upper()
     if player_type not in {"HITTER", "PITCHER"}:
         raise KboLineupError(f"Unknown playerType: {player_type}")
 
     params = {
         "playerType": player_type,
-        "teamCode": team_code,
         "page": "1",
-        "pageSize": str(PLAYER_STATS_PAGE_SIZE),
-        "sortField": "hitterAb" if player_type == "HITTER" else "pitcherInning",
-        "sortDirection": "desc",
+        "pageSize": str(page_size),
+        "sortField": sort_field or ("hitterAb" if player_type == "HITTER" else "pitcherInning"),
+        "sortDirection": sort_direction or "desc",
         "playerYn": "Y",
     }
+    if team_code:
+        params["teamCode"] = team_code
     data = request_json(PLAYER_STATS_URL.format(season_year=season_year), params)
     stats = data.get("result", {}).get("seasonPlayerStats")
     if not isinstance(stats, list):
         raise KboLineupError(f"No {player_type.lower()} stats for {team_code} in {season_year}")
     return [item for item in stats if isinstance(item, dict)]
+
+
+def fetch_league_player_leaders(season_year: int | str) -> dict[str, list[dict[str, Any]]]:
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        hitter_future = executor.submit(
+            fetch_team_player_stats,
+            season_year,
+            "",
+            "HITTER",
+            30,
+            "hitterHra",
+            "desc",
+        )
+        pitcher_future = executor.submit(
+            fetch_team_player_stats,
+            season_year,
+            "",
+            "PITCHER",
+            30,
+            "pitcherEra",
+            "asc",
+        )
+        hitter_rows = hitter_future.result()
+        pitcher_rows = pitcher_future.result()
+
+    return {
+        "hitters": [compact_roster_hitter(raw, index + 1, int(season_year)) for index, raw in enumerate(hitter_rows[:30])],
+        "pitchers": [compact_roster_pitcher(raw, index + 1, int(season_year)) for index, raw in enumerate(pitcher_rows[:30])],
+    }
+
+
+def fetch_league_category_leaders(season_year: int | str) -> dict[str, list[dict[str, Any]]]:
+    hitter_categories = [
+        ("avg", "타율", "hitterHra", "desc"),
+        ("hr", "홈런", "hitterHr", "desc"),
+        ("rbi", "타점", "hitterRbi", "desc"),
+        ("ops", "OPS", "hitterOps", "desc"),
+        ("sb", "도루", "hitterSb", "desc"),
+        ("war", "WAR", "hitterWar", "desc"),
+    ]
+    pitcher_categories = [
+        ("win", "승리", "pitcherWin", "desc"),
+        ("era", "ERA", "pitcherEra", "asc"),
+        ("kk", "탈삼진", "pitcherKk", "desc"),
+        ("save", "세이브", "pitcherSave", "desc"),
+        ("hold", "홀드", "pitcherHold", "desc"),
+        ("whip", "WHIP", "pitcherWhip", "asc"),
+    ]
+
+    results: dict[str, list[dict[str, Any]]] = {"hitters": [], "pitchers": []}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {}
+        for key, label, sort_field, direction in hitter_categories:
+            future = executor.submit(fetch_team_player_stats, season_year, "", "HITTER", 5, sort_field, direction)
+            futures[future] = ("hitters", key, label)
+        for key, label, sort_field, direction in pitcher_categories:
+            future = executor.submit(fetch_team_player_stats, season_year, "", "PITCHER", 5, sort_field, direction)
+            futures[future] = ("pitchers", key, label)
+
+        for future in as_completed(futures):
+            group, key, label = futures[future]
+            rows = future.result()
+            compact = compact_roster_hitter if group == "hitters" else compact_roster_pitcher
+            results[group].append(
+                {
+                    "key": key,
+                    "label": label,
+                    "players": [compact(raw, index + 1, int(season_year)) for index, raw in enumerate(rows[:5])],
+                }
+            )
+
+    sort_order = {
+        "hitters": [key for key, *_ in hitter_categories],
+        "pitchers": [key for key, *_ in pitcher_categories],
+    }
+    for group, keys in sort_order.items():
+        order = {key: index for index, key in enumerate(keys)}
+        results[group].sort(key=lambda item: order.get(str(item.get("key")), 99))
+    return results
 
 
 def roster_profile(raw: dict[str, Any]) -> dict[str, Any]:
@@ -934,6 +1022,40 @@ def collect_team_roster(
             "team_code": team_code,
             "mode": "team_roster",
         },
+    }
+
+
+def collect_team_overview(target_date: str) -> dict[str, Any]:
+    season_year = int(target_date[:4])
+    team_stats_by_code = fetch_team_stats(season_year)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        player_leaders_future = executor.submit(fetch_league_player_leaders, season_year)
+        category_leaders_future = executor.submit(fetch_league_category_leaders, season_year)
+        league_player_leaders = player_leaders_future.result()
+        league_category_leaders = category_leaders_future.result()
+    return {
+        "target_date": target_date,
+        "generated_at": now_kst_iso(),
+        "source": {
+            "name": SOURCE_NAME,
+            "url": SOURCE_BASE_URL,
+        },
+        "season_year": season_year,
+        "view_mode": "team_overview",
+        "league_team_stats": {
+            "source_url": TEAM_STATS_URL.format(season_year=season_year),
+            "teams": sorted_team_stats(team_stats_by_code),
+        },
+        "player_records_included": False,
+        "history_cache": {
+            "enabled": False,
+            "path": None,
+            "refresh_requested": False,
+        },
+        "games": [],
+        "teams": [],
+        "league_player_leaders": league_player_leaders,
+        "league_category_leaders": league_category_leaders,
     }
 
 
@@ -2438,7 +2560,9 @@ class KboWebHandler(BaseHTTPRequestHandler):
         daily_cache = load_daily_stats_cache(target_date) if include_records else None
 
         try:
-            if team and not game_id:
+            if team == TEAM_OVERVIEW_QUERY and not game_id:
+                data = collect_team_overview(target_date)
+            elif team and not game_id:
                 data = collect_team_roster(
                     target_date,
                     team,

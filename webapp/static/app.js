@@ -18,6 +18,7 @@ const teamStats = $("#teamStats");
 const teamsRoot = $("#teams");
 
 const AUTO_REFRESH_MS = 45000;
+const TEAM_OVERVIEW_VALUE = "__teams__";
 let loadToken = 0;
 let gameNavToken = 0;
 let autoRefreshTimer = null;
@@ -73,6 +74,7 @@ function hasLiveGame(data) {
 }
 
 function selectedTeamLabel(data) {
+  if (data?.view_mode === "team_overview") return "구단 전체 기록";
   if (data?.selected_game) {
     const game = (data.games || []).find((item) => String(item.game_id || "") === String(data.selected_game.game_id || ""));
     return game ? `${game.away_team} @ ${game.home_team}` : "경기 선택";
@@ -1012,15 +1014,238 @@ function renderPitcherLine(displayPitcher, label, starterPitcher, isCurrent = fa
   `;
 }
 
+function renderLeagueHitterLeaders(players, seasonYear) {
+  return `
+    <section class="leader-panel">
+      <div class="table-title">타자 시즌 상위 30 · AVG 순</div>
+      <div class="table-scroll">
+        <table class="leader-table leader-hitter-table">
+          <thead>
+            <tr>
+              <th class="num">순</th>
+              <th>선수</th>
+              <th>팀</th>
+              <th class="stat-focus">AVG</th>
+              <th>AB</th>
+              <th>OPS</th>
+              <th>HR</th>
+              <th>RBI</th>
+              <th>WAR</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${players.map((player, index) => {
+              const stats = seasonHitterStats(player, seasonYear);
+              return `
+                <tr>
+                  <td class="num">${escapeHtml(index + 1)}</td>
+                  <td class="player">${playerName(player)}</td>
+                  <td>${escapeHtml(player.team_name || player.team_code || "-")}</td>
+                  ${hitterStatCells(stats, ["avg", "ab", "ops", "hr", "rbi", "war"])}
+                </tr>
+              `;
+            }).join("") || `<tr><td colspan="9" class="empty-state">타자 상위권 정보 없음</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderLeaguePitcherLeaders(players, seasonYear) {
+  return `
+    <section class="leader-panel">
+      <div class="table-title">투수 시즌 상위 30 · ERA 순</div>
+      <div class="table-scroll">
+        <table class="leader-table leader-pitcher-table">
+          <thead>
+            <tr>
+              <th class="num">순</th>
+              <th>선수</th>
+              <th>팀</th>
+              <th>G</th>
+              <th>IP</th>
+              <th class="stat-focus">ERA</th>
+              <th>WHIP</th>
+              <th>HR</th>
+              <th>BB</th>
+              <th>W</th>
+              <th>L</th>
+              <th>SV</th>
+              <th>HLD</th>
+              <th>K</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${players.map((player, index) => {
+              const stats = pitcherSeasonStats(player, seasonYear);
+              return `
+                <tr>
+                  <td class="num">${escapeHtml(index + 1)}</td>
+                  <td class="player">${playerName(player)}</td>
+                  <td>${escapeHtml(player.team_name || player.team_code || "-")}</td>
+                  ${pitcherStatCells(stats, ["games", "innings", "era", "whip", "hr", "bb", "win", "lose", "save", "hold", "kk"])}
+                </tr>
+              `;
+            }).join("") || `<tr><td colspan="14" class="empty-state">투수 상위권 정보 없음</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderLeaguePlayerLeaders(data) {
+  const leaders = data.league_player_leaders || {};
+  const hitters = Array.isArray(leaders.hitters) ? leaders.hitters : [];
+  const pitchers = Array.isArray(leaders.pitchers) ? leaders.pitchers : [];
+  const seasonYear = Number(data.season_year || String(data.target_date || "").slice(0, 4));
+  if (!hitters.length && !pitchers.length) return "";
+  return `
+    <div class="leader-grid">
+      ${renderLeagueHitterLeaders(hitters, seasonYear)}
+      ${renderLeaguePitcherLeaders(pitchers, seasonYear)}
+    </div>
+  `;
+}
+
+function categoryLeaderValue(player, key, group, seasonYear) {
+  const stats = rawSeasonStats(player, seasonYear) || {};
+  if (group === "hitters") {
+    if (key === "avg") return rate(stats.avg ?? stats.hra);
+    if (key === "ops") return rateFixed(stats.ops);
+    if (key === "hr") return count(stats.hr, 2);
+    if (key === "rbi") return count(stats.rbi, 3);
+    if (key === "sb") return count(stats.sb, 2);
+    if (key === "war") return war(stats.war);
+  }
+  if (key === "win") return count(stats.win ?? stats.w, 2);
+  if (key === "era") return decimal(stats.era);
+  if (key === "kk") return count(stats.kk ?? stats.k, 3);
+  if (key === "save") return count(stats.save ?? stats.sv, 2);
+  if (key === "hold") return count(stats.hold, 2);
+  if (key === "whip") return decimal(stats.whip);
+  return "-";
+}
+
+function renderCategoryLeaderPanel(category, group, seasonYear) {
+  const players = Array.isArray(category.players) ? category.players : [];
+  return `
+    <section class="category-panel">
+      <div class="category-title">${escapeHtml(category.label || "-")}</div>
+      <table class="category-leader-table">
+        <tbody>
+          ${players.map((player, index) => `
+            <tr>
+              <td class="num">${escapeHtml(index + 1)}</td>
+              <td class="player">${playerName(player)}</td>
+              <td class="team-name">${escapeHtml(player.team_name || player.team_code || "-")}</td>
+              <td class="stat number-stat">${escapeHtml(categoryLeaderValue(player, category.key, group, seasonYear))}</td>
+            </tr>
+          `).join("") || `<tr><td colspan="4" class="empty-state">정보 없음</td></tr>`}
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
+function renderCategoryLeaderGroup(title, categories, group, seasonYear) {
+  if (!Array.isArray(categories) || !categories.length) return "";
+  return `
+    <section class="category-section">
+      <div class="table-title">${escapeHtml(title)}</div>
+      <div class="category-grid">
+        ${categories.map((category) => renderCategoryLeaderPanel(category, group, seasonYear)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderLeagueCategoryLeaders(data) {
+  const leaders = data.league_category_leaders || {};
+  const hitters = Array.isArray(leaders.hitters) ? leaders.hitters : [];
+  const pitchers = Array.isArray(leaders.pitchers) ? leaders.pitchers : [];
+  const seasonYear = Number(data.season_year || String(data.target_date || "").slice(0, 4));
+  if (!hitters.length && !pitchers.length) return "";
+  return `
+    <div class="category-leaders">
+      ${renderCategoryLeaderGroup("타자 주요 순위 · 전체 5위", hitters, "hitters", seasonYear)}
+      ${renderCategoryLeaderGroup("투수 주요 순위 · 전체 5위", pitchers, "pitchers", seasonYear)}
+    </div>
+  `;
+}
+
+function renderTeamOverviewStats(rows) {
+  return `
+    <div class="table-title">구단별 현재 기록</div>
+    <div class="table-scroll">
+      <table class="team-overview-table">
+        <thead>
+          <tr>
+            <th>순위</th>
+            <th>팀</th>
+            <th>승</th>
+            <th>무</th>
+            <th>패</th>
+            <th>승률</th>
+            <th>GB</th>
+            <th class="stat-focus">AVG</th>
+            <th>OPS</th>
+            <th>HR</th>
+            <th>SB</th>
+            <th>득점</th>
+            <th class="stat-focus">ERA</th>
+            <th>WHIP</th>
+            <th>QS</th>
+            <th>HLD</th>
+            <th>SV</th>
+            <th>E</th>
+            <th>최근5</th>
+            <th>연속</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((stats) => `
+            <tr>
+              <td class="num">${escapeHtml(stats.ranking ?? "-")}</td>
+              <td><strong>${escapeHtml(stats.teamName || stats.teamShortName || "-")}</strong></td>
+              ${statCell(count(stats.winGameCount, 2), "win")}
+              ${statCell(count(stats.drawnGameCount, 1), "draw")}
+              ${statCell(count(stats.loseGameCount, 2), "lose")}
+              ${statCell(rate(stats.wra), "winrate")}
+              ${statCell(stats.gameBehind ?? "-", "gb")}
+              ${statCell(rate(stats.offenseHra), "avg")}
+              ${statCell(rateFixed(stats.offenseOps), "ops")}
+              ${statCell(count(stats.offenseHr, 2), "hr")}
+              ${statCell(count(stats.offenseSb, 2), "sb")}
+              ${statCell(count(stats.offenseRun, 3), "run")}
+              ${statCell(decimal(stats.defenseEra), "era")}
+              ${statCell(decimal(stats.defenseWhip), "whip")}
+              ${statCell(count(stats.defenseQs, 2), "qs")}
+              ${statCell(count(stats.defenseHold, 2), "hold")}
+              ${statCell(count(stats.defenseSave, 2), "save")}
+              ${statCell(count(stats.defenseErr, 2), "err")}
+              <td class="stat">${escapeHtml(stats.lastFiveGames || "-")}</td>
+              <td>${escapeHtml(stats.continuousGameResult || "-")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderTeamStats(data) {
   const rows = data.league_team_stats?.teams || [];
-  if (!rows.length || data.selected_team || data.selected_game) {
+  const overviewMode = data.view_mode === "team_overview";
+  if (!rows.length || (!overviewMode && (data.selected_team || data.selected_game))) {
     teamStats.hidden = true;
     teamStats.innerHTML = "";
     return;
   }
   teamStats.hidden = false;
   teamStats.innerHTML = `
+    ${overviewMode ? renderTeamOverviewStats(rows) : `
     <table>
       <thead>
         <tr>
@@ -1043,6 +1268,9 @@ function renderTeamStats(data) {
         `).join("")}
       </tbody>
     </table>
+    `}
+    ${overviewMode ? renderLeagueCategoryLeaders(data) : ""}
+    ${overviewMode ? renderLeaguePlayerLeaders(data) : ""}
   `;
 }
 
@@ -1423,6 +1651,10 @@ function renderTeamPanel(team, data) {
 function renderTeams(data) {
   const teams = data.teams || [];
   teamsRoot.dataset.mobileSection = teamsRoot.dataset.mobileSection || "recent";
+  if (data.view_mode === "team_overview") {
+    teamsRoot.innerHTML = "";
+    return;
+  }
   if (data.view_mode === "team_roster" && teamsRoot.dataset.mobileSection === "history") {
     teamsRoot.dataset.mobileSection = "recent";
   }
@@ -1513,6 +1745,7 @@ async function loadData({
   refreshHistoryMode = refreshHistory.checked,
 } = {}) {
   const token = ++loadToken;
+  const overviewOnly = teamSelect.value === TEAM_OVERVIEW_VALUE && !selectedGameId;
   clearAutoRefresh();
   if (!silent) {
     setLoading(true, progressive ? "기본 정보 불러오는 중" : "데이터 수집 중");
@@ -1523,7 +1756,8 @@ async function loadData({
     if (progressive) {
       const baseData = await fetchLineups({ includeRecords: false });
       if (token !== loadToken) return;
-      renderData(baseData, "base");
+      renderData(baseData, overviewOnly ? phase : "base");
+      if (overviewOnly) return;
       if (!silent) setLoading(true, "성적 붙이는 중");
     }
 
