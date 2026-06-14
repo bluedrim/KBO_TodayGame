@@ -1349,6 +1349,155 @@ function renderRosterViewTabs() {
   `;
 }
 
+function signedCount(value) {
+  const parsed = intish(value);
+  if (parsed > 0) return `+${parsed}`;
+  return String(parsed);
+}
+
+function renderRosterTeamContext(team) {
+  const stats = team.team_season || {};
+  const opponents = Array.isArray(team.opponent_records) ? team.opponent_records : [];
+  return `
+    <section class="team-section roster-context-section">
+      <div class="roster-context-grid">
+        <div class="context-table-card">
+          <div class="table-title">현재 구단 기록</div>
+          <div class="table-scroll">
+            <table class="lineup-table team-context-table">
+              <thead>
+                <tr>
+                  <th>순위</th>
+                  <th>G</th>
+                  <th>W</th>
+                  <th>D</th>
+                  <th>L</th>
+                  <th>승률</th>
+                  <th>GB</th>
+                  <th class="stat-focus">AVG</th>
+                  <th>OPS</th>
+                  <th>HR</th>
+                  <th>SB</th>
+                  <th>득점</th>
+                  <th class="stat-focus">ERA</th>
+                  <th>WHIP</th>
+                  <th>실점</th>
+                  <th>E</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  ${statCell(stats.ranking ?? "-", "rank")}
+                  ${statCell(count(stats.gameCount, 2), "games")}
+                  ${statCell(count(stats.winGameCount, 2), "win")}
+                  ${statCell(count(stats.drawnGameCount, 1), "draw")}
+                  ${statCell(count(stats.loseGameCount, 2), "lose")}
+                  ${statCell(rate(stats.wra), "winrate")}
+                  ${statCell(stats.gameBehind ?? "-", "gb")}
+                  ${statCell(rate(stats.offenseHra), "avg")}
+                  ${statCell(rateFixed(stats.offenseOps), "ops")}
+                  ${statCell(count(stats.offenseHr, 2), "hr")}
+                  ${statCell(count(stats.offenseSb, 2), "sb")}
+                  ${statCell(count(stats.offenseRun, 3), "run")}
+                  ${statCell(decimal(stats.defenseEra), "era")}
+                  ${statCell(decimal(stats.defenseWhip), "whip")}
+                  ${statCell(count(stats.defenseR, 3), "run")}
+                  ${statCell(count(stats.defenseErr, 2), "err")}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="context-table-card">
+          <div class="table-title">상대팀별 성적</div>
+          <div class="table-scroll">
+            <table class="lineup-table team-context-table opponent-record-table">
+              <thead>
+                <tr>
+                  <th rowspan="2">상대</th>
+                  <th class="group-head" colspan="10">전적</th>
+                  <th class="group-head" colspan="9">타격</th>
+                  <th class="group-head" colspan="9">투수</th>
+                </tr>
+                <tr class="sub-head">
+                  <th>G</th>
+                  <th>W</th>
+                  <th>D</th>
+                  <th>L</th>
+                  <th>승률</th>
+                  <th>득점</th>
+                  <th>실점</th>
+                  <th>득실</th>
+                  <th>홈</th>
+                  <th>원정</th>
+                  <th class="stat-focus">AVG</th>
+                  <th>AB</th>
+                  <th>H</th>
+                  <th>R</th>
+                  <th>HR</th>
+                  <th>RBI</th>
+                  <th>BB</th>
+                  <th>K</th>
+                  <th>SB</th>
+                  <th class="stat-focus">ERA</th>
+                  <th>WHIP</th>
+                  <th>IP</th>
+                  <th>H</th>
+                  <th>HR</th>
+                  <th>BB</th>
+                  <th>K</th>
+                  <th>R</th>
+                  <th>ER</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${opponents.map((record) => {
+                  const batting = record.batting || {};
+                  const pitching = record.pitching || {};
+                  return `
+                  <tr>
+                    <td><strong>${escapeHtml(record.opponent_name || record.opponent_code || "-")}</strong></td>
+                    ${statCell(count(record.games, 2), "games")}
+                    ${statCell(count(record.wins, 2), "win")}
+                    ${statCell(count(record.draws, 1), "draw")}
+                    ${statCell(count(record.losses, 2), "lose")}
+                    ${statCell(rate(record.win_rate), "winrate")}
+                    ${statCell(count(record.runs_for, 3), "run")}
+                    ${statCell(count(record.runs_against, 3), "run")}
+                    ${statCell(signedCount(record.run_diff), "diff")}
+                    ${statCell(count(record.home_games, 2), "home")}
+                    ${statCell(count(record.away_games, 2), "away")}
+                    ${statCell(rate(batting.avg), "avg")}
+                    ${statCell(count(batting.ab, 3), "ab")}
+                    ${statCell(count(batting.hit, 3), "hit")}
+                    ${statCell(count(batting.run, 3), "run")}
+                    ${statCell(count(batting.hr, 2), "hr")}
+                    ${statCell(count(batting.rbi, 3), "rbi")}
+                    ${statCell(count(batting.bb, 3), "bb")}
+                    ${statCell(count(batting.kk, 3), "kk")}
+                    ${statCell(count(batting.sb, 2), "sb")}
+                    ${statCell(decimal(pitching.era), "era")}
+                    ${statCell(decimal(pitching.whip), "whip")}
+                    ${statCell(pitching.innings || "-", "innings")}
+                    ${statCell(count(pitching.hit, 3), "hit")}
+                    ${statCell(count(pitching.hr, 2), "hr")}
+                    ${statCell(count(pitching.bb, 3), "bb")}
+                    ${statCell(count(pitching.kk, 3), "kk")}
+                    ${statCell(count(pitching.run, 3), "run")}
+                    ${statCell(count(pitching.er, 3), "er")}
+                  </tr>
+                `;
+                }).join("") || `<tr><td colspan="29" class="empty-state">상대팀별 성적 없음</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderRosterTeamPanel(team, data) {
   const stats = team.team_season || {};
   const hitters = Array.isArray(team.batting_order) ? team.batting_order : [];
@@ -1386,6 +1535,8 @@ function renderRosterTeamPanel(team, data) {
         <div class="metric"><span>최근5</span><strong>${escapeHtml(stats.lastFiveGames || "-")}</strong></div>
         <div class="metric"><span>연속</span><strong>${escapeHtml(stats.continuousGameResult || "-")}</strong></div>
       </div>
+
+      ${renderRosterTeamContext(team)}
 
       ${rosterView === "all" ? `
         <div class="mobile-section-tabs" aria-label="표 전환">

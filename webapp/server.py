@@ -43,10 +43,12 @@ from kbo_lineups import (  # noqa: E402
     fetch_team_stats,
     fetch_vs_player_stats,
     filter_data_for_team,
+    innings_to_outs,
     kst_today,
     load_history_cache,
     normalize_team_key,
     now_kst_iso,
+    outs_to_innings,
     parse_json_object,
     request_json,
     save_history_cache,
@@ -119,6 +121,7 @@ class DailyStatsCache:
         day.setdefault("player_game_logs", {})
         day.setdefault("schedule_meta", {})
         day.setdefault("kbo_hitter_situation", {})
+        day.setdefault("team_opponent_records", {})
         return day
 
 
@@ -269,6 +272,43 @@ def store_schedule_meta(cache: DailyStatsCache | None, target_date: str, record:
     cache.dirty = True
 
 
+def team_opponent_records_cache_key(season_year: int | str, target_date: str, team_code: str) -> str:
+    return f"{season_year}:{target_date}:{team_code}:regular-v2"
+
+
+def cached_team_opponent_records(
+    cache: DailyStatsCache | None,
+    season_year: int | str,
+    target_date: str,
+    team_code: str,
+) -> dict[str, Any] | None:
+    if not cache:
+        return None
+    record = cache.day.get("team_opponent_records", {}).get(
+        team_opponent_records_cache_key(season_year, target_date, team_code)
+    )
+    if isinstance(record, dict):
+        count_cache_event(cache, "team_opponent_record_hits")
+        return record
+    return None
+
+
+def store_team_opponent_records(
+    cache: DailyStatsCache | None,
+    season_year: int | str,
+    target_date: str,
+    team_code: str,
+    record: dict[str, Any],
+) -> None:
+    if not cache:
+        return
+    cache.day.setdefault("team_opponent_records", {})[
+        team_opponent_records_cache_key(season_year, target_date, team_code)
+    ] = record
+    count_cache_event(cache, "team_opponent_record_fetches")
+    cache.dirty = True
+
+
 def kbo_hitter_situation_cache_key(season_year: int | str, team_code: str, detail_code: str) -> str:
     return f"{season_year}:{team_code}:{KBO_PITCHER_TYPE_SITUATION}:{detail_code}"
 
@@ -329,6 +369,9 @@ def cache_status(
     game_logs = day.get("player_game_logs") if isinstance(day.get("player_game_logs"), dict) else {}
     schedule_meta = day.get("schedule_meta") if isinstance(day.get("schedule_meta"), dict) else {}
     kbo_situation = day.get("kbo_hitter_situation") if isinstance(day.get("kbo_hitter_situation"), dict) else {}
+    team_opponent_records = (
+        day.get("team_opponent_records") if isinstance(day.get("team_opponent_records"), dict) else {}
+    )
     stats = {
         "player_record_hits": cache.stats.get("player_record_hits", 0),
         "player_record_fetches": cache.stats.get("player_record_fetches", 0),
@@ -340,6 +383,8 @@ def cache_status(
         "schedule_meta_fetches": cache.stats.get("schedule_meta_fetches", 0),
         "kbo_hitter_situation_hits": cache.stats.get("kbo_hitter_situation_hits", 0),
         "kbo_hitter_situation_fetches": cache.stats.get("kbo_hitter_situation_fetches", 0),
+        "team_opponent_record_hits": cache.stats.get("team_opponent_record_hits", 0),
+        "team_opponent_record_fetches": cache.stats.get("team_opponent_record_fetches", 0),
     }
     fetched = (
         stats["player_record_fetches"]
@@ -347,6 +392,7 @@ def cache_status(
         + stats["player_game_log_fetches"]
         + stats["schedule_meta_fetches"]
         + stats["kbo_hitter_situation_fetches"]
+        + stats["team_opponent_record_fetches"]
     )
     hits = (
         stats["player_record_hits"]
@@ -354,6 +400,7 @@ def cache_status(
         + stats["player_game_log_hits"]
         + stats["schedule_meta_hits"]
         + stats["kbo_hitter_situation_hits"]
+        + stats["team_opponent_record_hits"]
     )
     if refresh_history:
         message = "3년 기록 갱신으로 성적을 새로 조회했습니다"
@@ -377,6 +424,7 @@ def cache_status(
         "stored_player_game_logs": len(game_logs),
         "stored_schedule_meta": len(schedule_meta),
         "stored_kbo_hitter_situation": len(kbo_situation),
+        "stored_team_opponent_records": len(team_opponent_records),
         "stats": stats,
         "message": message,
     }
@@ -738,6 +786,22 @@ def first_present(data: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def safe_int(value: Any, fallback: int = 0) -> int:
+    if value in (None, ""):
+        return fallback
+    try:
+        return int(float(str(value).replace(",", "")))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def win_rate(wins: int, losses: int) -> float | None:
+    decisions = wins + losses
+    if decisions <= 0:
+        return None
+    return round(wins / decisions, 3)
+
+
 def team_stat_match_keys(stats: dict[str, Any]) -> set[str]:
     values = [
         stats.get("teamId"),
@@ -763,6 +827,254 @@ def find_team_stats(team_stats_by_code: dict[str, dict[str, Any]], team_query: s
             return stats
 
     raise KboLineupError(f"팀 정보를 찾지 못했습니다: {team_query}")
+
+
+def fetch_kbo_schedule_range(from_date: str, to_date: str, page_size: int = 100) -> list[dict[str, Any]]:
+    games: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        data = request_json(
+            SCHEDULE_URL,
+            {
+                "fields": "basic,schedule,baseball",
+                "categoryId": "kbo",
+                "fromDate": from_date,
+                "toDate": to_date,
+                "size": str(page_size),
+                "page": str(page),
+            },
+        )
+        result = data.get("result", {}) if isinstance(data.get("result"), dict) else {}
+        rows = result.get("games") if isinstance(result.get("games"), list) else []
+        games.extend([row for row in rows if isinstance(row, dict) and row.get("categoryId") == "kbo"])
+        total = safe_int(result.get("gameTotalCount"))
+        if not rows or page * page_size >= total:
+            break
+        page += 1
+    return games
+
+
+def empty_opponent_record(team_stats: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "opponent_code": str(team_stats.get("teamId") or ""),
+        "opponent_name": team_stats.get("teamName") or team_stats.get("teamShortName") or "-",
+        "ranking": team_stats.get("ranking"),
+        "games": 0,
+        "wins": 0,
+        "draws": 0,
+        "losses": 0,
+        "win_rate": None,
+        "runs_for": 0,
+        "runs_against": 0,
+        "run_diff": 0,
+        "home_games": 0,
+        "away_games": 0,
+        "batting": {
+            "ab": 0,
+            "hit": 0,
+            "run": 0,
+            "hr": 0,
+            "rbi": 0,
+            "bb": 0,
+            "kk": 0,
+            "sb": 0,
+            "avg": None,
+        },
+        "pitching": {
+            "outs": 0,
+            "innings": "0",
+            "hit": 0,
+            "hr": 0,
+            "bb": 0,
+            "kk": 0,
+            "run": 0,
+            "er": 0,
+            "era": None,
+            "whip": None,
+        },
+    }
+
+
+def finalized_opponent_record(record: dict[str, Any]) -> dict[str, Any]:
+    wins = safe_int(record.get("wins"))
+    losses = safe_int(record.get("losses"))
+    runs_for = safe_int(record.get("runs_for"))
+    runs_against = safe_int(record.get("runs_against"))
+    record["win_rate"] = win_rate(wins, losses)
+    record["run_diff"] = runs_for - runs_against
+
+    batting = record.get("batting") if isinstance(record.get("batting"), dict) else {}
+    ab = safe_int(batting.get("ab"))
+    hit = safe_int(batting.get("hit"))
+    batting["avg"] = round(hit / ab, 3) if ab else None
+    record["batting"] = batting
+
+    pitching = record.get("pitching") if isinstance(record.get("pitching"), dict) else {}
+    outs = safe_int(pitching.get("outs"))
+    hit_allowed = safe_int(pitching.get("hit"))
+    walks = safe_int(pitching.get("bb"))
+    earned_runs = safe_int(pitching.get("er"))
+    innings = outs / 3 if outs else 0
+    pitching["innings"] = outs_to_innings(outs)
+    pitching["era"] = round(earned_runs * 9 / innings, 2) if innings else None
+    pitching["whip"] = round((hit_allowed + walks) / innings, 2) if innings else None
+    record["pitching"] = pitching
+    return record
+
+
+def team_boxscore_side(game: dict[str, Any], team_code: str) -> str | None:
+    if str(game.get("homeTeamCode") or "") == team_code:
+        return "home"
+    if str(game.get("awayTeamCode") or "") == team_code:
+        return "away"
+    return None
+
+
+def add_team_boxscore_stats(record: dict[str, Any], game: dict[str, Any], team_code: str) -> None:
+    side = team_boxscore_side(game, team_code)
+    if not side:
+        return
+
+    try:
+        game_record = fetch_game_record(str(game.get("gameId") or ""))
+    except KboLineupError:
+        return
+
+    record_data = game_record.get("recordData") if isinstance(game_record.get("recordData"), dict) else {}
+    batters_boxscore = (
+        record_data.get("battersBoxscore") if isinstance(record_data.get("battersBoxscore"), dict) else {}
+    )
+    batting_total = batters_boxscore.get(f"{side}Total") if isinstance(batters_boxscore.get(f"{side}Total"), dict) else {}
+    batters = batters_boxscore.get(side) if isinstance(batters_boxscore.get(side), list) else []
+
+    batting = record.get("batting") if isinstance(record.get("batting"), dict) else {}
+    for key in ("ab", "hit", "run", "rbi", "sb"):
+        batting[key] = safe_int(batting.get(key)) + safe_int(batting_total.get(key))
+    for key in ("hr", "bb", "kk"):
+        batting[key] = safe_int(batting.get(key)) + sum(
+            safe_int(player.get(key)) for player in batters if isinstance(player, dict)
+        )
+    record["batting"] = batting
+
+    team_pitching = (
+        record_data.get("teamPitchingBoxscore")
+        if isinstance(record_data.get("teamPitchingBoxscore"), dict)
+        else {}
+    )
+    pitching_total = team_pitching.get(side) if isinstance(team_pitching.get(side), dict) else {}
+    pitchers_boxscore = (
+        record_data.get("pitchersBoxscore") if isinstance(record_data.get("pitchersBoxscore"), dict) else {}
+    )
+    pitchers = pitchers_boxscore.get(side) if isinstance(pitchers_boxscore.get(side), list) else []
+
+    pitching = record.get("pitching") if isinstance(record.get("pitching"), dict) else {}
+    pitching["outs"] = safe_int(pitching.get("outs")) + innings_to_outs(pitching_total.get("inn"))
+    for key, source_key in (
+        ("hit", "hit"),
+        ("hr", "hr"),
+        ("kk", "kk"),
+        ("run", "r"),
+        ("er", "er"),
+    ):
+        pitching[key] = safe_int(pitching.get(key)) + safe_int(pitching_total.get(source_key))
+    pitching["bb"] = safe_int(pitching.get("bb")) + sum(
+        safe_int(player.get("bb")) for player in pitchers if isinstance(player, dict)
+    )
+    record["pitching"] = pitching
+
+
+def build_team_opponent_records(
+    team_code: str,
+    team_stats_by_code: dict[str, dict[str, Any]],
+    season_year: int,
+    target_date: str,
+    daily_cache: DailyStatsCache | None = None,
+    use_daily_cache: bool = True,
+) -> list[dict[str, Any]]:
+    cached = cached_team_opponent_records(daily_cache, season_year, target_date, team_code) if use_daily_cache else None
+    if cached is not None:
+        records = cached.get("records")
+        if isinstance(records, list):
+            return [record for record in records if isinstance(record, dict)]
+
+    start_date = f"{season_year}-01-01"
+    games = fetch_kbo_schedule_range(start_date, target_date)
+    opponent_map: dict[str, dict[str, Any]] = {
+        opponent_code: empty_opponent_record(opponent_stats)
+        for opponent_code, opponent_stats in team_stats_by_code.items()
+        if opponent_code != team_code
+    }
+
+    for game in games:
+        if game.get("roundCode") != "kbo_r":
+            continue
+        if bool(game.get("cancel")):
+            continue
+        if str(game.get("statusCode") or "").upper() != "RESULT" and str(game.get("statusNum") or "") != "4":
+            continue
+
+        home_code = str(game.get("homeTeamCode") or "")
+        away_code = str(game.get("awayTeamCode") or "")
+        if team_code not in {home_code, away_code}:
+            continue
+        if game.get("homeTeamScore") in (None, "") or game.get("awayTeamScore") in (None, ""):
+            continue
+
+        home_score = safe_int(game.get("homeTeamScore"))
+        away_score = safe_int(game.get("awayTeamScore"))
+        opponent_code = away_code if team_code == home_code else home_code
+        record = opponent_map.setdefault(
+            opponent_code,
+            empty_opponent_record(
+                team_stats_by_code.get(
+                    opponent_code,
+                    {
+                        "teamId": opponent_code,
+                        "teamName": game.get("awayTeamName") if opponent_code == away_code else game.get("homeTeamName"),
+                    },
+                )
+            ),
+        )
+
+        team_is_home = team_code == home_code
+        team_score = home_score if team_is_home else away_score
+        opponent_score = away_score if team_is_home else home_score
+
+        record["games"] += 1
+        record["home_games"] += 1 if team_is_home else 0
+        record["away_games"] += 0 if team_is_home else 1
+        record["runs_for"] += team_score
+        record["runs_against"] += opponent_score
+
+        if team_score > opponent_score:
+            record["wins"] += 1
+        elif team_score < opponent_score:
+            record["losses"] += 1
+        else:
+            record["draws"] += 1
+        add_team_boxscore_stats(record, game, team_code)
+
+    records = sorted(
+        [finalized_opponent_record(record) for record in opponent_map.values()],
+        key=lambda row: (
+            safe_int(row.get("ranking"), 999),
+            str(row.get("opponent_name") or ""),
+        ),
+    )
+
+    store_team_opponent_records(
+        daily_cache,
+        season_year,
+        target_date,
+        team_code,
+        {
+            "season_year": season_year,
+            "target_date": target_date,
+            "team_code": team_code,
+            "records": records,
+        },
+    )
+    return records
 
 
 def fetch_team_player_stats(
@@ -981,6 +1293,14 @@ def collect_team_roster(
         "basis": f"{season_year} 시즌 선수단",
         "note": "선택 팀 전체 선수 성적입니다.",
         "team_season": selected_stats,
+        "opponent_records": build_team_opponent_records(
+            team_code,
+            team_stats_by_code,
+            season_year,
+            target_date,
+            daily_cache,
+            use_daily_cache,
+        ),
         "batting_order": hitters,
         "pitching_staff": pitchers,
         "roster_mode": True,
@@ -2581,7 +2901,8 @@ class KboWebHandler(BaseHTTPRequestHandler):
         refresh_history = truthy(first(params, "refreshHistory"))
         refresh_daily_stats = truthy(first(params, "refreshDailyStats"))
         use_daily_cache = not refresh_history and not refresh_daily_stats
-        daily_cache = load_daily_stats_cache(target_date) if include_records else None
+        team_roster_request = bool(team and not game_id and team != TEAM_OVERVIEW_QUERY)
+        daily_cache = load_daily_stats_cache(target_date) if include_records or team_roster_request else None
 
         try:
             if team == TEAM_OVERVIEW_QUERY and not game_id:
