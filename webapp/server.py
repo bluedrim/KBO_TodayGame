@@ -1173,6 +1173,34 @@ def pitcher_from_record_side(
     }
 
 
+def pitchers_from_record_side(record: dict[str, Any] | None, side: str) -> list[dict[str, Any]]:
+    if not record:
+        return []
+
+    boxscore = record.get("recordData", {}).get("pitchersBoxscore", {})
+    pitchers = boxscore.get(side) if isinstance(boxscore, dict) else None
+    if not isinstance(pitchers, list):
+        return []
+
+    results: list[dict[str, Any]] = []
+    for raw in pitchers:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            continue
+        results.append(
+            {
+                "name": name,
+                "player_code": str(raw.get("pcode") or ""),
+                "position": "투수",
+                "bats_throws": raw.get("hitType") or "",
+                "today": compact_pitcher_today(raw),
+            }
+        )
+    return results
+
+
 def numeric_value(value: Any, fallback: float = 0.0) -> float:
     if value in (None, "", "-"):
         return fallback
@@ -1262,6 +1290,30 @@ def compact_pitcher_info(pitcher: dict[str, Any] | None, role: str) -> dict[str,
         "bats_throws": pitcher.get("bats_throws") or "",
         "today": pitcher.get("today") if isinstance(pitcher.get("today"), dict) else None,
     }
+
+
+def same_pitcher(left: dict[str, Any] | None, right: dict[str, Any] | None) -> bool:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    left_code = str(left.get("player_code") or left.get("pcode") or "")
+    right_code = str(right.get("player_code") or right.get("pcode") or "")
+    if left_code and right_code:
+        return left_code == right_code
+    return bool(normalize_team_key(left.get("name")) and normalize_team_key(left.get("name")) == normalize_team_key(right.get("name")))
+
+
+def compact_relief_pitchers(
+    pitchers: list[dict[str, Any]],
+    starter: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for pitcher in pitchers:
+        if same_pitcher(pitcher, starter):
+            continue
+        compacted = compact_pitcher_info(pitcher, "relief")
+        if compacted and not any(same_pitcher(compacted, existing) for existing in results):
+            results.append(compacted)
+    return results
 
 
 def compact_live_batter(raw: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1363,6 +1415,30 @@ def attach_records_and_context(
     attach_player_records(player, player_cache, history_cache, refresh_history, use_daily_cache, daily_cache)
     if isinstance(opponent, dict):
         attach_player_vs_opponent_team(player, opponent)
+
+
+def attach_pitchers_records_and_context(
+    pitchers: list[dict[str, Any]],
+    opponent: dict[str, Any] | None,
+    include_player_records: bool,
+    player_cache: dict[str, dict[str, Any]],
+    history_cache: Any,
+    refresh_history: bool,
+    use_daily_cache: bool,
+    daily_cache: DailyStatsCache | None,
+) -> None:
+    for pitcher in pitchers:
+        if isinstance(pitcher, dict):
+            attach_records_and_context(
+                pitcher,
+                opponent,
+                include_player_records,
+                player_cache,
+                history_cache,
+                refresh_history,
+                use_daily_cache,
+                daily_cache,
+            )
 
 
 def attach_player_records(
@@ -2197,6 +2273,37 @@ def enrich_live_context(
                 daily_cache,
             )
 
+        home_pitchers = pitchers_from_record_side(record, "home")
+        away_pitchers = pitchers_from_record_side(record, "away")
+        if isinstance(home_team, dict):
+            home_team["relief_pitchers"] = compact_relief_pitchers(home_pitchers, home_team.get("starting_pitcher"))
+        if isinstance(away_team, dict):
+            away_team["relief_pitchers"] = compact_relief_pitchers(away_pitchers, away_team.get("starting_pitcher"))
+
+        if include_player_records:
+            if isinstance(home_team, dict):
+                attach_pitchers_records_and_context(
+                    home_team.get("relief_pitchers", []),
+                    away_team,
+                    include_player_records,
+                    player_cache,
+                    history_cache,
+                    refresh_history,
+                    use_daily_cache,
+                    daily_cache,
+                )
+            if isinstance(away_team, dict):
+                attach_pitchers_records_and_context(
+                    away_team.get("relief_pitchers", []),
+                    home_team,
+                    include_player_records,
+                    player_cache,
+                    history_cache,
+                    refresh_history,
+                    use_daily_cache,
+                    daily_cache,
+                )
+
         if finalized:
             if include_player_records:
                 if isinstance(away_team, dict) and isinstance(home_team, dict):
@@ -2206,10 +2313,14 @@ def enrich_live_context(
             continue
 
         home_current = (
+            (home_pitchers[-1] if home_pitchers else None)
+            or
             pitcher_from_record_side(record, "home", str((meta or {}).get("homeCurrentPitcherName") or ""))
             or pitcher_from_schedule(meta, "home")
         )
         away_current = (
+            (away_pitchers[-1] if away_pitchers else None)
+            or
             pitcher_from_record_side(record, "away", str((meta or {}).get("awayCurrentPitcherName") or ""))
             or pitcher_from_schedule(meta, "away")
         )
@@ -2220,6 +2331,28 @@ def enrich_live_context(
             away_team["current_pitcher"] = compact_pitcher_info(away_current, "current")
 
         if include_player_records:
+            if isinstance(home_team, dict) and isinstance(home_team.get("current_pitcher"), dict):
+                attach_records_and_context(
+                    home_team["current_pitcher"],
+                    away_team,
+                    include_player_records,
+                    player_cache,
+                    history_cache,
+                    refresh_history,
+                    use_daily_cache,
+                    daily_cache,
+                )
+            if isinstance(away_team, dict) and isinstance(away_team.get("current_pitcher"), dict):
+                attach_records_and_context(
+                    away_team["current_pitcher"],
+                    home_team,
+                    include_player_records,
+                    player_cache,
+                    history_cache,
+                    refresh_history,
+                    use_daily_cache,
+                    daily_cache,
+                )
             if isinstance(away_team, dict):
                 attach_batter_vs_pitcher(away_team, home_current, vs_cache, "current", use_daily_cache, daily_cache)
             if isinstance(home_team, dict):

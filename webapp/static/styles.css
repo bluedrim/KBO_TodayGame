@@ -504,18 +504,38 @@ tr:last-child td {
   text-overflow: ellipsis;
 }
 
+.pitcher-stack {
+  border-bottom: 1px solid var(--line);
+}
+
 .pitcher-line {
   display: grid;
-  grid-template-columns: 190px 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: 102px minmax(236px, 0.9fr) minmax(260px, 1.1fr);
+  gap: 6px;
   align-items: center;
   padding: 6px 9px;
-  border-bottom: 1px solid var(--line);
   background: #fbfcfd;
+}
+
+.pitcher-line .stat {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+
+.pitcher-line + .pitcher-line {
+  border-top: 1px solid var(--line);
+}
+
+.pitcher-line.current {
+  background: #fffdf8;
 }
 
 .pitcher-name {
   font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .live-chip {
@@ -855,10 +875,6 @@ th.num {
     grid-template-columns: 1fr;
   }
 
-  .pitcher-line {
-    grid-template-columns: 1fr;
-  }
-
   .game-strip,
   .game-card-head {
     grid-template-columns: 1fr;
@@ -939,5 +955,11 @@ th.num {
   .lineup-table .player,
   .history-table .player {
     box-shadow: 8px 0 8px rgba(23, 32, 42, 0.05);
+  }
+}
+
+@media (max-width: 640px) {
+  .pitcher-line {
+    grid-template-columns: 1fr;
   }
 }

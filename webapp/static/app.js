@@ -930,8 +930,21 @@ async function loadGameQuickNav() {
   }
 }
 
-function matchupPitcherForTeam(team, batters) {
+function opponentTeamFor(team, data) {
+  const teams = Array.isArray(data?.teams) ? data.teams : [];
+  return teams.find((candidate) => (
+    candidate
+    && candidate.game_id === team?.game_id
+    && candidate.team_code !== team?.team_code
+  )) || null;
+}
+
+function matchupPitcherForTeam(team, batters, data) {
   if (team?.matchup_pitcher?.name) return team.matchup_pitcher;
+  const opponentTeam = opponentTeamFor(team, data);
+  if (opponentTeam?.current_pitcher?.name) return opponentTeam.current_pitcher;
+  const opponentRelievers = Array.isArray(opponentTeam?.relief_pitchers) ? opponentTeam.relief_pitchers : [];
+  if (opponentRelievers.length) return { ...opponentRelievers[opponentRelievers.length - 1], role: "current" };
   const matchup = batters.find((batter) => batter.vs_starting_pitcher)?.vs_starting_pitcher;
   const pitcher = matchup?.opposing_pitcher;
   return pitcher?.name ? { ...pitcher, role: "starter" } : { name: "상대선발", role: "starter" };
@@ -943,18 +956,52 @@ function pitcherTodayLine(player) {
   return `오늘 ${today.inn || "-"}IP ${intish(today.hit)}H ${intish(today.run)}R ${intish(today.er)}ER ${intish(today.kk)}K`;
 }
 
+function samePitcher(left, right) {
+  if (!left || !right) return false;
+  const leftCode = String(left.player_code || "");
+  const rightCode = String(right.player_code || "");
+  if (leftCode && rightCode) return leftCode === rightCode;
+  return normalizeKey(left.name) && normalizeKey(left.name) === normalizeKey(right.name);
+}
+
 function pitcherSummaryCell(displayPitcher, starterPitcher) {
+  const isRelief = (displayPitcher?.role === "current" || displayPitcher?.role === "relief")
+    && !samePitcher(displayPitcher, starterPitcher);
+  if (isRelief) {
+    const recent = recentCell(displayPitcher);
+    if (recent !== "-") return recent;
+    return pitcherTodayLine(displayPitcher) || "교체 등판";
+  }
   const today = pitcherTodayLine(displayPitcher);
   if (today) return today;
   return recentCell(starterPitcher || displayPitcher);
 }
 
 function pitcherContextCell(displayPitcher, starterPitcher) {
+  const isRelief = (displayPitcher?.role === "current" || displayPitcher?.role === "relief")
+    && !samePitcher(displayPitcher, starterPitcher);
+  if (isRelief) return vsTeamCell(displayPitcher, true);
   if (displayPitcher?.role === "current") {
-    const samePitcher = displayPitcher.player_code && starterPitcher?.player_code && displayPitcher.player_code === starterPitcher.player_code;
-    return samePitcher ? vsTeamCell(starterPitcher, true) : "경기 중 현재 등판";
+    return samePitcher(displayPitcher, starterPitcher) ? vsTeamCell(starterPitcher, true) : vsTeamCell(displayPitcher, true);
   }
   return vsTeamCell(starterPitcher || displayPitcher, true);
+}
+
+function renderPitcherLine(displayPitcher, label, starterPitcher, isCurrent = false) {
+  const linePitcher = isCurrent ? { ...displayPitcher, role: "current" } : displayPitcher;
+  return `
+    <div class="pitcher-line${isCurrent ? " current" : ""}">
+      <div>
+        <div class="subtle">${escapeHtml(label)}</div>
+        <div class="pitcher-name">
+          ${escapeHtml(linePitcher?.name || "정보 없음")}
+          ${isCurrent ? `<span class="chip live-chip">현재</span>` : ""}
+        </div>
+      </div>
+      <div class="stat">${escapeHtml(pitcherSummaryCell(linePitcher, starterPitcher))}</div>
+      <div class="stat">${escapeHtml(pitcherContextCell(linePitcher, starterPitcher))}</div>
+    </div>
+  `;
 }
 
 function renderTeamStats(data) {
@@ -1176,14 +1223,37 @@ function renderTeamPanel(team, data) {
   const batters = Array.isArray(team.batting_order) ? team.batting_order : [];
   const pitcher = team.starting_pitcher || {};
   const opponentName = team.opponent?.team_name || "상대팀";
-  const matchupPitcher = matchupPitcherForTeam(team, batters);
+  const matchupPitcher = matchupPitcherForTeam(team, batters, data);
   const matchupPitcherLabel = matchupPitcher.role === "current" ? "상대 현재 투수" : "상대 선발";
-  const displayPitcher = team.current_pitcher?.name ? team.current_pitcher : pitcher;
-  const pitcherLabel = displayPitcher.role === "current" ? "현재투수" : "선발투수";
+  const currentPitcher = team.current_pitcher?.name ? team.current_pitcher : null;
+  const reliefPitchers = Array.isArray(team.relief_pitchers) ? team.relief_pitchers : [];
+  const pitcherLinePlayers = [];
+  reliefPitchers.forEach((reliever) => {
+    if (!reliever?.name || samePitcher(reliever, pitcher)) return;
+    if (!pitcherLinePlayers.some((existing) => samePitcher(existing, reliever))) {
+      pitcherLinePlayers.push(reliever);
+    }
+  });
+  if (
+    currentPitcher
+    && !samePitcher(currentPitcher, pitcher)
+    && !pitcherLinePlayers.some((existing) => samePitcher(existing, currentPitcher))
+  ) {
+    pitcherLinePlayers.push(currentPitcher);
+  }
   const yearColumns = historyYears(data);
   const currentYear = Number(data.season_year || String(data.target_date || "").slice(0, 4));
   const contextPlayer = contextHeaderPlayer(batters);
   const contextColspan = 2 + 2 + 2 + contextAvgOnlyColumns.length;
+  const pitcherLines = [
+    renderPitcherLine(pitcher, "선발투수", pitcher),
+    ...pitcherLinePlayers.map((reliever) => renderPitcherLine(
+      reliever,
+      "교체투수",
+      pitcher,
+      Boolean(currentPitcher && samePitcher(reliever, currentPitcher)),
+    )),
+  ].join("");
 
   return `
     <article class="team-panel ${className}">
@@ -1208,17 +1278,7 @@ function renderTeamPanel(team, data) {
         <div class="metric"><span>연속</span><strong>${escapeHtml(stats.continuousGameResult || "-")}</strong></div>
       </div>
 
-      <div class="pitcher-line">
-        <div>
-          <div class="subtle">${escapeHtml(pitcherLabel)}</div>
-          <div class="pitcher-name">
-            ${escapeHtml(displayPitcher.name || "정보 없음")}
-            ${displayPitcher.role === "current" ? `<span class="chip live-chip">현재</span>` : ""}
-          </div>
-        </div>
-        <div class="stat">${escapeHtml(pitcherSummaryCell(displayPitcher, pitcher))}</div>
-        <div class="stat">${escapeHtml(pitcherContextCell(displayPitcher, pitcher))}</div>
-      </div>
+      <div class="pitcher-stack">${pitcherLines}</div>
 
       <div class="mobile-section-tabs" aria-label="표 전환">
         <button class="section-tab" type="button" data-section="recent">최근/올해</button>
