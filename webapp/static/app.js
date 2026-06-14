@@ -2,6 +2,8 @@ const $ = (selector) => document.querySelector(selector);
 
 const controls = $("#controls");
 const dateInput = $("#dateInput");
+const prevDateButton = $("#prevDateButton");
+const nextDateButton = $("#nextDateButton");
 const gameQuickNav = $("#gameQuickNav");
 const teamQuickNav = $("#teamQuickNav");
 const teamSelect = $("#teamSelect");
@@ -39,6 +41,29 @@ function kstDateString() {
   }).formatToParts(new Date());
   const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${map.year}-${map.month}-${map.day}`;
+}
+
+function parseDateInputValue(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateInputValue(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function changeDateBy(days) {
+  const current = parseDateInputValue(dateInput.value) || parseDateInputValue(kstDateString());
+  if (!current) return;
+  current.setUTCDate(current.getUTCDate() + days);
+  dateInput.value = formatDateInputValue(current);
+  handleDateChange();
 }
 
 function escapeHtml(value) {
@@ -1948,11 +1973,14 @@ teamSelect.addEventListener("change", () => {
   renderTeamQuickNav();
   loadData({ progressive: true });
 });
-dateInput.addEventListener("change", () => {
+function handleDateChange() {
   selectedGameId = "";
   loadGameQuickNav();
   loadData({ progressive: true });
-});
+}
+dateInput.addEventListener("change", handleDateChange);
+prevDateButton.addEventListener("click", () => changeDateBy(-1));
+nextDateButton.addEventListener("click", () => changeDateBy(1));
 gameQuickNav.addEventListener("click", (event) => {
   const button = event.target.closest(".game-jump");
   if (!button) return;

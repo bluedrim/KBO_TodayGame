@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>KBO 오늘의 경기</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260614-recent-ab-width">
+    <link rel="stylesheet" href="/static/styles.css?v=20260614-date-nav">
   </head>
   <body>
     <main class="app-shell">
@@ -16,10 +16,14 @@
           <p id="networkLine" class="meta-line"></p>
         </div>
         <form id="controls" class="controls">
-          <label>
-            <span>날짜</span>
-            <input id="dateInput" type="date" name="date">
-          </label>
+          <div class="date-field">
+            <label for="dateInput">날짜</label>
+            <div class="date-nav-control">
+              <button id="prevDateButton" class="secondary-button date-step-button" type="button" aria-label="전날" title="전날">&lt;</button>
+              <input id="dateInput" type="date" name="date">
+              <button id="nextDateButton" class="secondary-button date-step-button" type="button" aria-label="다음날" title="다음날">&gt;</button>
+            </div>
+          </div>
           <div class="quick-nav-stack">
             <div id="gameQuickNav" class="game-quick-nav" aria-label="선택 날짜 경기 바로가기"></div>
             <div id="teamQuickNav" class="team-quick-nav" aria-label="팀 바로가기"></div>
@@ -64,6 +68,6 @@
       <section id="teamStats" class="team-stats" hidden></section>
       <section id="teams" class="team-grid" aria-live="polite"></section>
     </main>
-    <script src="/static/app.js?v=20260614-game-all-rankings"></script>
+    <script src="/static/app.js?v=20260614-date-nav"></script>
   </body>
 </html>

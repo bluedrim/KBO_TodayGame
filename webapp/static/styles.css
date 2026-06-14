@@ -101,6 +101,33 @@ label {
   font-size: 11px;
 }
 
+.date-field {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.date-nav-control {
+  display: grid;
+  grid-template-columns: 30px minmax(132px, 1fr) 30px;
+  gap: 4px;
+  align-items: center;
+}
+
+.date-nav-control input {
+  width: 100%;
+  min-width: 132px;
+}
+
+.date-step-button {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+
 label[hidden] {
   display: none;
 }
@@ -1075,10 +1102,15 @@ th.num {
   }
 
   .controls label,
+  .controls .date-field,
   .controls .quick-nav-stack,
   .controls .settings-menu,
   .controls button {
     flex: 1 1 140px;
+  }
+
+  .controls .date-field {
+    flex-basis: 220px;
   }
 
   .controls .quick-nav-stack {
