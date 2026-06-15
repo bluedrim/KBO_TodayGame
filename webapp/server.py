@@ -418,6 +418,7 @@ def cache_status(
     return {
         "enabled": True,
         "target_date": cache.target_date,
+        "updated_at": cache.data.get("updated_at"),
         "refresh_history": refresh_history,
         "stored_player_records": len(player_records),
         "stored_vs_player_stats": len(vs_records),
@@ -428,6 +429,166 @@ def cache_status(
         "stats": stats,
         "message": message,
     }
+
+
+def side_team_name(game: dict[str, Any], meta: dict[str, Any] | None, side: str) -> str:
+    if side == "away":
+        return str(game.get("away_team") or (meta or {}).get("awayTeamName") or "원정")
+    return str(game.get("home_team") or (meta or {}).get("homeTeamName") or "홈")
+
+
+def side_score_key(side: str) -> str:
+    return "away_score" if side == "away" else "home_score"
+
+
+def inning_side_label(index: int, side: str) -> str:
+    return f"{index + 1}회{'초' if side == 'away' else '말'}"
+
+
+def score_timeline_events(
+    game: dict[str, Any],
+    record_data: dict[str, Any],
+    meta: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    score_board = record_data.get("scoreBoard") if isinstance(record_data.get("scoreBoard"), dict) else {}
+    innings = score_board.get("inn") if isinstance(score_board.get("inn"), dict) else {}
+    away_scores = innings.get("away") if isinstance(innings.get("away"), list) else []
+    home_scores = innings.get("home") if isinstance(innings.get("home"), list) else []
+    column_count = max(len(away_scores), len(home_scores))
+    away_total = 0
+    home_total = 0
+    events: list[dict[str, Any]] = []
+
+    for index in range(column_count):
+        away_runs = safe_int(away_scores[index]) if index < len(away_scores) else 0
+        if away_runs:
+            away_total += away_runs
+            events.append(
+                {
+                    "type": "score",
+                    "inning": inning_side_label(index, "away"),
+                    "team": side_team_name(game, meta, "away"),
+                    "text": f"{side_team_name(game, meta, 'away')} {away_runs}득점",
+                    "score": f"{away_total} : {home_total}",
+                }
+            )
+        else:
+            away_total += away_runs
+
+        home_runs = safe_int(home_scores[index]) if index < len(home_scores) else 0
+        if home_runs:
+            home_total += home_runs
+            events.append(
+                {
+                    "type": "score",
+                    "inning": inning_side_label(index, "home"),
+                    "team": side_team_name(game, meta, "home"),
+                    "text": f"{side_team_name(game, meta, 'home')} {home_runs}득점",
+                    "score": f"{away_total} : {home_total}",
+                }
+            )
+        else:
+            home_total += home_runs
+
+    return events
+
+
+def pitcher_change_event(
+    game: dict[str, Any],
+    record_data: dict[str, Any],
+    meta: dict[str, Any] | None,
+    side: str,
+) -> dict[str, Any] | None:
+    boxscore = record_data.get("pitchersBoxscore") if isinstance(record_data.get("pitchersBoxscore"), dict) else {}
+    pitchers = boxscore.get(side) if isinstance(boxscore, dict) else None
+    if not isinstance(pitchers, list) or len(pitchers) < 2:
+        return None
+    names = [str(raw.get("name") or "").strip() for raw in pitchers[1:] if isinstance(raw, dict) and raw.get("name")]
+    if not names:
+        return None
+    team_name = side_team_name(game, meta, side)
+    return {
+        "type": "pitcher",
+        "inning": "투수",
+        "team": team_name,
+        "text": f"{team_name} 투수 교체: {', '.join(names[:5])}",
+        "score": "",
+    }
+
+
+def substitution_event(
+    game: dict[str, Any],
+    record_data: dict[str, Any],
+    meta: dict[str, Any] | None,
+    side: str,
+) -> dict[str, Any] | None:
+    boxscore = record_data.get("battersBoxscore") if isinstance(record_data.get("battersBoxscore"), dict) else {}
+    batters = boxscore.get(side) if isinstance(boxscore, dict) else None
+    if not isinstance(batters, list):
+        return None
+    names = [
+        str(raw.get("name") or "").strip()
+        for raw in batters
+        if isinstance(raw, dict) and raw.get("substituteIn") and raw.get("name")
+    ]
+    if not names:
+        return None
+    team_name = side_team_name(game, meta, side)
+    return {
+        "type": "substitution",
+        "inning": "교체",
+        "team": team_name,
+        "text": f"{team_name} 선수 교체: {', '.join(names[:6])}",
+        "score": "",
+    }
+
+
+def etc_record_events(record_data: dict[str, Any]) -> list[dict[str, Any]]:
+    records = record_data.get("etcRecords")
+    if not isinstance(records, list):
+        return []
+    events: list[dict[str, Any]] = []
+    for raw in records[:4]:
+        if not isinstance(raw, dict):
+            continue
+        label = str(raw.get("how") or "").strip()
+        result = str(raw.get("result") or "").strip()
+        if not label or not result:
+            continue
+        events.append(
+            {
+                "type": "note",
+                "inning": label,
+                "team": "",
+                "text": result,
+                "score": "",
+            }
+        )
+    return events
+
+
+def timeline_from_record(
+    game: dict[str, Any],
+    record: dict[str, Any] | None,
+    meta: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not record:
+        return []
+    record_data = record.get("recordData") if isinstance(record.get("recordData"), dict) else {}
+    if not record_data:
+        return []
+
+    events = score_timeline_events(game, record_data, meta)
+    for side in ("away", "home"):
+        pitcher_event = pitcher_change_event(game, record_data, meta, side)
+        if pitcher_event:
+            events.append(pitcher_event)
+    for side in ("away", "home"):
+        sub_event = substitution_event(game, record_data, meta, side)
+        if sub_event:
+            events.append(sub_event)
+    events.extend(etc_record_events(record_data))
+    return events[-12:]
 
 
 def fetch_schedule_meta(target_date: str) -> dict[str, dict[str, Any]]:
@@ -2741,6 +2902,9 @@ def enrich_live_context(
         scoreboard = scoreboard_from_record(game, record, meta, visible_scoreboard)
         if scoreboard:
             game["scoreboard"] = scoreboard
+        timeline = timeline_from_record(game, record, meta)
+        if timeline:
+            game["timeline"] = timeline
 
         lineup_from_boxscore = is_live_game(meta) or is_result_game(meta)
         if not lineup_from_boxscore:

@@ -69,6 +69,34 @@ h1 {
   font-size: 11px;
 }
 
+.cache-detail {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 5px;
+  flex-wrap: wrap;
+  vertical-align: middle;
+}
+
+.cache-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 17px;
+  padding: 0 5px;
+  border: 1px solid #dce5eb;
+  border-radius: 999px;
+  background: #f7fafc;
+  color: #53636f;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.cache-pill small {
+  color: #8a98a3;
+  font-size: 9px;
+  font-weight: 900;
+}
+
 .controls {
   display: flex;
   align-items: end;
@@ -364,6 +392,74 @@ button:disabled {
 
 .score-total {
   font-weight: 900;
+}
+
+.game-timeline {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+
+.timeline-title {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.game-timeline ol {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  background: #f8fafb;
+  font-size: 11px;
+}
+
+.timeline-inning {
+  color: var(--muted);
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.timeline-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-score {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #e4f1ec;
+  color: #1f6d52;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.timeline-pitcher,
+.timeline-substitution {
+  background: #fff8ed;
+}
+
+.timeline-note {
+  background: #f4f7fa;
 }
 
 .chip {

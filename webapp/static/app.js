@@ -66,6 +66,46 @@ function changeDateBy(days) {
   handleDateChange();
 }
 
+function validRosterView(value) {
+  return ["all", "hitters", "pitchers"].includes(value) ? value : "all";
+}
+
+function applyUrlState() {
+  const params = new URLSearchParams(window.location.search);
+  const dateParam = params.get("date");
+  dateInput.value = parseDateInputValue(dateParam) ? dateParam : kstDateString();
+
+  rosterView = validRosterView(params.get("view"));
+  const gameId = params.get("gameId") || "";
+  const hasTeam = params.has("team");
+  const team = hasTeam ? params.get("team") || "" : "NC";
+
+  selectedGameId = gameId;
+  if (selectedGameId) {
+    teamSelect.value = "";
+  } else {
+    if (team) ensureTeamOption(team, team);
+    teamSelect.value = team;
+  }
+}
+
+function syncUrlState() {
+  const params = new URLSearchParams();
+  if (dateInput.value) params.set("date", dateInput.value);
+  if (selectedGameId) {
+    params.set("gameId", selectedGameId);
+  } else if (teamSelect.value) {
+    params.set("team", teamSelect.value);
+  }
+  if (rosterView !== "all") params.set("view", rosterView);
+
+  const query = params.toString();
+  const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}`;
+  if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+    window.history.replaceState(null, "", nextUrl);
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -125,7 +165,31 @@ function setStatus(data, phase = "ready") {
 
 function setCacheStatus(data, fallback = "") {
   const cache = data?.cache_status;
-  cacheLine.textContent = cache?.message || fallback;
+  if (!cache?.enabled) {
+    cacheLine.textContent = cache?.message || fallback;
+    return;
+  }
+
+  const stats = cache.stats || {};
+  const pairs = [
+    ["선수", cache.stored_player_records, stats.player_record_hits, stats.player_record_fetches],
+    ["상대투수", cache.stored_vs_player_stats, stats.vs_player_stats_hits, stats.vs_player_stats_fetches],
+    ["경기로그", cache.stored_player_game_logs, stats.player_game_log_hits, stats.player_game_log_fetches],
+    ["상황", cache.stored_kbo_hitter_situation, stats.kbo_hitter_situation_hits, stats.kbo_hitter_situation_fetches],
+    ["팀상대", cache.stored_team_opponent_records, stats.team_opponent_record_hits, stats.team_opponent_record_fetches],
+  ];
+  const updated = cache.updated_at ? ` · 캐시 ${kstTimeString(cache.updated_at)}` : "";
+  cacheLine.innerHTML = `
+    <span>${escapeHtml(cache.message || fallback || "성적 캐시 사용 중")}${escapeHtml(updated)}</span>
+    <span class="cache-detail">
+      ${pairs.map(([label, stored, hits, fetches]) => `
+        <span class="cache-pill" title="${escapeHtml(label)} 저장 ${intish(stored)}건 · 재사용 ${intish(hits)}건 · 조회 ${intish(fetches)}건">
+          ${escapeHtml(label)} ${escapeHtml(stored ?? 0)}
+          <small>${escapeHtml(hits ?? 0)}/${escapeHtml(fetches ?? 0)}</small>
+        </span>
+      `).join("")}
+    </span>
+  `;
 }
 
 function num(value, fallback = 0) {
@@ -801,6 +865,25 @@ function renderScoreboard(game) {
   `;
 }
 
+function renderGameTimeline(game) {
+  const events = Array.isArray(game?.timeline) ? game.timeline : [];
+  if (!events.length) return "";
+  return `
+    <div class="game-timeline">
+      <div class="timeline-title">경기 흐름</div>
+      <ol>
+        ${events.map((event) => `
+          <li class="timeline-item timeline-${escapeHtml(event.type || "note")}">
+            <span class="timeline-inning">${escapeHtml(event.inning || "-")}</span>
+            <span class="timeline-text">${escapeHtml(event.text || "-")}</span>
+            ${event.score ? `<span class="timeline-score">${escapeHtml(event.score)}</span>` : ""}
+          </li>
+        `).join("")}
+      </ol>
+    </div>
+  `;
+}
+
 function renderGameCard(game, data) {
   return `
     <article class="game-card">
@@ -814,6 +897,7 @@ function renderGameCard(game, data) {
         </div>
       </div>
       ${renderScoreboard(game)}
+      ${renderGameTimeline(game)}
     </article>
   `;
 }
@@ -1960,22 +2044,25 @@ async function loadData({
   }
 }
 
-dateInput.value = kstDateString();
-teamSelect.value = "NC";
+applyUrlState();
 renderTeamQuickNav();
+syncUrlState();
 controls.addEventListener("submit", (event) => {
   event.preventDefault();
+  syncUrlState();
   loadData({ progressive: true });
 });
 teamSelect.addEventListener("change", () => {
   selectedGameId = "";
   renderGameQuickNav(quickGames);
   renderTeamQuickNav();
+  syncUrlState();
   loadData({ progressive: true });
 });
 function handleDateChange() {
   selectedGameId = "";
   loadGameQuickNav();
+  syncUrlState();
   loadData({ progressive: true });
 }
 dateInput.addEventListener("change", handleDateChange);
@@ -1988,6 +2075,7 @@ gameQuickNav.addEventListener("click", (event) => {
   teamSelect.value = "";
   renderGameQuickNav(quickGames);
   renderTeamQuickNav();
+  syncUrlState();
   loadData({ progressive: true });
 });
 teamQuickNav.addEventListener("click", (event) => {
@@ -1999,6 +2087,7 @@ teamQuickNav.addEventListener("click", (event) => {
   selectedGameId = "";
   renderGameQuickNav(quickGames);
   renderTeamQuickNav();
+  syncUrlState();
   loadData({ progressive: true });
 });
 refreshGameButton.addEventListener("click", () => loadData({ progressive: true }));
@@ -2009,9 +2098,10 @@ autoRefresh.addEventListener("change", () => {
 teamsRoot.addEventListener("click", (event) => {
   const rosterButton = event.target.closest("[data-roster-view]");
   if (rosterButton) {
-    rosterView = rosterButton.dataset.rosterView || "all";
+    rosterView = validRosterView(rosterButton.dataset.rosterView);
     if (rosterView === "hitters") setMobileSection("recent");
     if (rosterView === "pitchers") setMobileSection("matchup");
+    syncUrlState();
     if (latestData) renderData(latestData);
     return;
   }
