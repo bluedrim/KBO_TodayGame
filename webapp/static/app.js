@@ -34,6 +34,7 @@ let quickGameDate = "";
 let selectedGameId = "";
 let rosterView = "all";
 let todayView = "";
+let todayPositionFilter = "";
 
 teamsRoot.dataset.mobileSection = "recent";
 
@@ -87,6 +88,10 @@ function todayViewLabel(value = todayView) {
 function todayViewButtonLabel(value) {
   const option = TODAY_VIEW_OPTIONS.find(([key]) => key === value);
   return option?.[2] || option?.[1] || "";
+}
+
+function resetTodayPositionFilter() {
+  todayPositionFilter = "";
 }
 
 function applyUrlState() {
@@ -314,6 +319,8 @@ function displayPosition(position) {
   if (/^(중|中|중견|중견수|CF)$/i.test(compact)) return "중견수";
   if (/^(우|右|우익|우익수|RF)$/i.test(compact)) return "우익수";
   if (/^(지|指|지명|지명타자|DH)$/i.test(compact)) return "지명타자";
+  if (/^(대|대타|PH)$/i.test(compact)) return "대타";
+  if (/^(주|대주자|PR)$/i.test(compact)) return "대주자";
   return text;
 }
 
@@ -1587,7 +1594,7 @@ function positionLabel(player, view) {
 function positionSortOrder(label, view) {
   const order = view === "pitchers"
     ? ["선발투수"]
-    : ["포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수", "외야수", "지명타자", "야수 기타"];
+    : ["포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수", "외야수", "지명타자", "대타", "대주자", "야수 기타"];
   const index = order.indexOf(label);
   return index === -1 ? order.length : index;
 }
@@ -1646,6 +1653,33 @@ function groupTodayRows(rows, view, currentYear) {
       positionSortOrder(a.label, view) - positionSortOrder(b.label, view)
       || a.label.localeCompare(b.label, "ko-KR")
     ));
+}
+
+function todaySeasonYear(data) {
+  return Number(data.season_year || String(data.target_date || "").slice(0, 4));
+}
+
+function renderTodayPositionFilter(groups) {
+  if (todayView === "pitchers" || !groups.length) return "";
+  const total = groups.reduce((sum, group) => sum + group.rows.length, 0);
+  const buttons = [
+    { label: "전체", value: "", count: total },
+    ...groups.map((group) => ({ label: group.label, value: group.label, count: group.rows.length })),
+  ];
+  return `
+    <div class="today-position-filter" aria-label="포지션별 보기">
+      ${buttons.map((button) => `
+        <button
+          class="position-filter-button${todayPositionFilter === button.value ? " active" : ""}"
+          type="button"
+          data-today-position="${escapeHtml(button.value)}"
+        >
+          <span>${escapeHtml(button.label)}</span>
+          <small>${escapeHtml(button.count)}</small>
+        </button>
+      `).join("")}
+    </div>
+  `;
 }
 
 function dateShort(value) {
@@ -1863,13 +1897,17 @@ function renderTodayPitcherTable(rows, currentYear) {
   `;
 }
 
-function renderTodayPositionSections(data, rows) {
-  const currentYear = Number(data.season_year || String(data.target_date || "").slice(0, 4));
-  const groups = groupTodayRows(rows, todayView, currentYear);
+function renderTodayPositionSections(groups, currentYear) {
   if (!groups.length) {
     return `<div class="empty-state">표시할 선수 정보가 없습니다.</div>`;
   }
-  return groups.map((group) => `
+  const visibleGroups = todayPositionFilter && todayView !== "pitchers"
+    ? groups.filter((group) => group.label === todayPositionFilter)
+    : groups;
+  if (!visibleGroups.length) {
+    return `<div class="empty-state">선택한 포지션의 선수 정보가 없습니다.</div>`;
+  }
+  return visibleGroups.map((group) => `
     <section class="today-position-section">
       <div class="table-title">
         <span>${escapeHtml(group.label)}</span>
@@ -1885,6 +1923,11 @@ function renderTodayPositionSections(data, rows) {
 function renderTodayLineupView(data) {
   const title = todayViewLabel();
   const rows = todayView === "pitchers" ? todayPitcherRows(data) : todayHitterRows(data, todayView);
+  const currentYear = todaySeasonYear(data);
+  const groups = groupTodayRows(rows, todayView, currentYear);
+  if (todayPositionFilter && !groups.some((group) => group.label === todayPositionFilter)) {
+    resetTodayPositionFilter();
+  }
   const teamCount = new Set(rows.map((row) => row.team?.team_code || row.team?.team_name).filter(Boolean)).size;
   return `
     <article class="team-panel today-panel selected">
@@ -1903,7 +1946,8 @@ function renderTodayLineupView(data) {
       </div>
       <section class="team-section">
         <div class="table-title">${escapeHtml(title)} · 포지션별 · ${todayView === "pitchers" ? "직전경기 / 최근5경기출전 / 올해성적" : "최근5G / 최근10G / 올해성적"}</div>
-        ${renderTodayPositionSections(data, rows)}
+        ${renderTodayPositionFilter(groups)}
+        ${renderTodayPositionSections(groups, currentYear)}
       </section>
     </article>
   `;
@@ -2583,6 +2627,7 @@ controls.addEventListener("submit", (event) => {
 teamSelect.addEventListener("change", () => {
   todayView = "";
   selectedGameId = "";
+  resetTodayPositionFilter();
   renderGameQuickNav(quickGames);
   renderTeamQuickNav();
   syncUrlState();
@@ -2591,6 +2636,7 @@ teamSelect.addEventListener("change", () => {
 function handleDateChange() {
   todayView = "";
   selectedGameId = "";
+  resetTodayPositionFilter();
   loadGameQuickNav();
   syncUrlState();
   loadData({ progressive: true });
@@ -2615,6 +2661,7 @@ gameQuickNav.addEventListener("click", (event) => {
     todayView = validTodayView(todayButton.dataset.todayView);
     selectedGameId = "";
     teamSelect.value = "";
+    resetTodayPositionFilter();
     renderGameQuickNav(quickGames);
     renderTeamQuickNav();
     syncUrlState();
@@ -2627,6 +2674,7 @@ gameQuickNav.addEventListener("click", (event) => {
   todayView = "";
   selectedGameId = button.dataset.gameId || "";
   teamSelect.value = "";
+  resetTodayPositionFilter();
   renderGameQuickNav(quickGames);
   renderTeamQuickNav();
   syncUrlState();
@@ -2640,6 +2688,7 @@ teamQuickNav.addEventListener("click", (event) => {
   ensureTeamOption(value, button.dataset.teamLabel || value || "전체");
   teamSelect.value = value;
   selectedGameId = "";
+  resetTodayPositionFilter();
   renderGameQuickNav(quickGames);
   renderTeamQuickNav();
   syncUrlState();
@@ -2651,6 +2700,13 @@ autoRefresh.addEventListener("change", () => {
   if (latestData) scheduleAutoRefresh(latestData);
 });
 teamsRoot.addEventListener("click", (event) => {
+  const positionButton = event.target.closest("[data-today-position]");
+  if (positionButton) {
+    todayPositionFilter = positionButton.dataset.todayPosition || "";
+    if (latestData) renderData(latestData);
+    return;
+  }
+
   const rosterButton = event.target.closest("[data-roster-view]");
   if (rosterButton) {
     rosterView = validRosterView(rosterButton.dataset.rosterView);
