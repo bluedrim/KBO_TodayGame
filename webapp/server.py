@@ -1758,6 +1758,72 @@ def enrich_teams_with_records_parallel(
             player["records"] = record_cache.get(code, {"error": "기록 없음"})
 
 
+def pitcher_entries_for_appearance_logs(data: dict[str, Any]) -> list[dict[str, Any]]:
+    pitchers: list[dict[str, Any]] = []
+    for team in data.get("teams", []):
+        if not isinstance(team, dict):
+            continue
+        for key in ("starting_pitcher", "current_pitcher"):
+            pitcher = team.get(key)
+            if isinstance(pitcher, dict):
+                pitchers.append(pitcher)
+        for pitcher in team.get("relief_pitchers", []):
+            if isinstance(pitcher, dict):
+                pitchers.append(pitcher)
+    return pitchers
+
+
+def attach_pitcher_appearance_logs(
+    data: dict[str, Any],
+    use_daily_cache: bool,
+    daily_cache: DailyStatsCache | None,
+) -> None:
+    pitchers_by_code: dict[str, list[dict[str, Any]]] = {}
+    for pitcher in pitcher_entries_for_appearance_logs(data):
+        player_code = str(pitcher.get("player_code") or "")
+        if not player_code:
+            continue
+        pitchers_by_code.setdefault(player_code, []).append(pitcher)
+
+    if not pitchers_by_code:
+        return
+
+    log_cache: dict[str, dict[str, Any]] = {}
+    missing: list[tuple[str, str | None]] = []
+    for code, pitchers in pitchers_by_code.items():
+        cached = cached_player_game_log(daily_cache, code, "pitcher") if use_daily_cache else None
+        if cached:
+            log_cache[code] = cached
+            continue
+
+        records = pitchers[0].get("records") if isinstance(pitchers[0].get("records"), dict) else {}
+        recent = records.get("recent_10_games") if isinstance(records, dict) else None
+        season_start = str(recent.get("day_start") or "") if isinstance(recent, dict) else ""
+        missing.append((code, season_start or None))
+
+    if missing:
+        worker_count = min(MAX_FETCH_WORKERS, len(missing))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(fetch_player_game_log, code, "pitcher", season_start): code
+                for code, season_start in missing
+            }
+            for future in as_completed(futures):
+                code = futures[future]
+                try:
+                    log_cache[code] = future.result()
+                except KboLineupError as exc:
+                    log_cache[code] = {"error": str(exc), "games": []}
+                store_player_game_log(daily_cache, code, "pitcher", log_cache[code])
+
+    for code, pitchers in pitchers_by_code.items():
+        log = log_cache.get(code)
+        if not isinstance(log, dict):
+            continue
+        for pitcher in pitchers:
+            pitcher["appearance_game_log"] = log
+
+
 def is_live_game(meta: dict[str, Any] | None) -> bool:
     if not meta:
         return False
@@ -3031,6 +3097,7 @@ def enrich_live_context(
         save_history_cache(history_cache)
 
     if include_player_records:
+        attach_pitcher_appearance_logs(data, use_daily_cache, daily_cache)
         attach_context_matchups(data, target_date, use_daily_cache, daily_cache)
 
 

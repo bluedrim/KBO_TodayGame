@@ -4,19 +4,14 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>KBO 오늘의 경기</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260614-state-cache-flow">
+    <link rel="stylesheet" href="/static/styles.css?v=20260616-status-footer">
   </head>
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <div>
+        <div class="brand-area">
           <h1>KBO 오늘의 경기</h1>
-          <p id="statusLine">라인업과 상대 기록을 불러오는 중</p>
-          <p id="cacheLine" class="meta-line"></p>
-          <p id="networkLine" class="meta-line"></p>
-        </div>
-        <form id="controls" class="controls">
-          <div class="date-field">
+          <div class="date-field title-date">
             <label for="dateInput">날짜</label>
             <div class="date-nav-control">
               <button id="prevDateButton" class="secondary-button date-step-button" type="button" aria-label="전날" title="전날">&lt;</button>
@@ -24,6 +19,8 @@
               <button id="nextDateButton" class="secondary-button date-step-button" type="button" aria-label="다음날" title="다음날">&gt;</button>
             </div>
           </div>
+        </div>
+        <form id="controls" class="controls">
           <div class="quick-nav-stack">
             <div id="gameQuickNav" class="game-quick-nav" aria-label="선택 날짜 경기 바로가기"></div>
             <div id="teamQuickNav" class="team-quick-nav" aria-label="팀 바로가기"></div>
@@ -67,7 +64,12 @@
       <section id="gameStrip" class="game-strip" hidden></section>
       <section id="teamStats" class="team-stats" hidden></section>
       <section id="teams" class="team-grid" aria-live="polite"></section>
+      <footer class="status-footer" aria-live="polite">
+        <p id="statusLine">라인업과 상대 기록을 불러오는 중</p>
+        <p id="cacheLine" class="meta-line"></p>
+        <p id="networkLine" class="meta-line"></p>
+      </footer>
     </main>
-    <script src="/static/app.js?v=20260614-state-cache-flow"></script>
+    <script src="/static/app.js?v=20260616-status-footer"></script>
   </body>
 </html>

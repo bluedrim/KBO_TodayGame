@@ -41,13 +41,20 @@ select {
   top: 0;
   z-index: 5;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
   padding: 9px 0 10px;
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
+}
+
+.brand-area {
+  display: grid;
+  gap: 4px;
+  flex: 0 0 248px;
+  min-width: 220px;
 }
 
 h1 {
@@ -58,7 +65,7 @@ h1 {
 }
 
 #statusLine {
-  margin: 4px 0 0;
+  margin: 0;
   color: var(--muted);
   font-size: 12px;
 }
@@ -67,6 +74,17 @@ h1 {
   margin: 2px 0 0;
   color: var(--muted);
   font-size: 11px;
+}
+
+.status-footer {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.status-footer .meta-line {
+  margin-top: 3px;
 }
 
 .cache-detail {
@@ -102,6 +120,7 @@ h1 {
   align-items: end;
   gap: 8px;
   flex-wrap: wrap;
+  flex: 1 1 auto;
   justify-content: flex-end;
 }
 
@@ -134,6 +153,11 @@ label {
   gap: 4px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.title-date {
+  width: min(230px, 100%);
+  margin-top: 5px;
 }
 
 .date-nav-control {
@@ -339,36 +363,48 @@ button:disabled {
 
 .game-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 7px;
   margin-top: 14px;
+  overflow-x: auto;
 }
 
 .game-card {
-  padding: 9px 12px;
+  min-width: 0;
+  padding: 8px 9px;
   overflow: hidden;
 }
 
 .game-card-head {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
   align-items: center;
 }
 
 .game-card strong {
-  font-size: 17px;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .game-meta {
   display: flex;
-  justify-content: flex-end;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: 4px;
   flex-wrap: wrap;
 }
 
+.game-card .chip {
+  min-height: 20px;
+  padding: 1px 5px;
+  font-size: 10px;
+}
+
 .scoreboard {
-  margin-top: 8px;
+  margin-top: 7px;
   overflow-x: auto;
 }
 
@@ -395,8 +431,8 @@ button:disabled {
 }
 
 .game-timeline {
-  margin-top: 8px;
-  padding-top: 7px;
+  margin-top: 7px;
+  padding-top: 6px;
   border-top: 1px solid var(--line);
 }
 
@@ -620,6 +656,10 @@ tr:last-child td {
   grid-column: 1 / -1;
 }
 
+.team-panel.today-panel {
+  grid-column: 1 / -1;
+}
+
 .team-head {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -772,7 +812,7 @@ tr:last-child td {
 }
 
 .opponent-record-table .stat-innings,
-.opponent-record-table th:nth-child(23) {
+.opponent-record-table th:nth-child(21) {
   min-width: 48px;
 }
 
@@ -1102,6 +1142,28 @@ th.num {
   padding-right: 3px;
 }
 
+.roster-hitter-table tbody td.stat-hr:nth-child(6),
+.roster-hitter-table thead .sub-head th:nth-child(4),
+.recent-season-table:not(.roster-hitter-table) tbody td.stat-hr:nth-child(8),
+.recent-season-table:not(.roster-hitter-table) thead .sub-head th:nth-child(6) {
+  width: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  padding-left: 3px;
+  padding-right: 3px;
+}
+
+.roster-hitter-table tbody td.stat-rbi:nth-child(7),
+.roster-hitter-table thead .sub-head th:nth-child(5),
+.recent-season-table:not(.roster-hitter-table) tbody td.stat-rbi:nth-child(9),
+.recent-season-table:not(.roster-hitter-table) thead .sub-head th:nth-child(7) {
+  width: 30px;
+  min-width: 30px;
+  max-width: 30px;
+  padding-left: 3px;
+  padding-right: 3px;
+}
+
 .pitcher-roster-table {
   min-width: 1980px;
 }
@@ -1130,10 +1192,237 @@ th.num {
   padding-right: 4px;
 }
 
+.today-lineup-table {
+  min-width: 1180px;
+}
+
+.today-hitter-table {
+  width: 920px;
+  min-width: 920px;
+  table-layout: fixed;
+}
+
+.today-hitter-table col.col-num {
+  width: 30px;
+}
+
+.today-hitter-table col.col-player {
+  width: 96px;
+}
+
+.today-hitter-table col.col-team {
+  width: 46px;
+}
+
+.today-hitter-table col.col-game {
+  width: 104px;
+}
+
+.today-hitter-table col.col-order,
+.today-hitter-table col.col-ab,
+.today-hitter-table col.col-count {
+  width: 30px;
+}
+
+.today-hitter-table col.col-avg,
+.today-hitter-table col.col-ops {
+  width: 46px;
+}
+
+.today-hitter-table col.col-rbi,
+.today-hitter-table col.col-war {
+  width: 38px;
+}
+
+.today-hitter-table col.col-recent10-hr {
+  width: 24px;
+}
+
+.today-hitter-table col.col-recent10-rbi {
+  width: 30px;
+}
+
+.today-pitcher-table {
+  width: 1264px;
+  min-width: 1264px;
+  table-layout: fixed;
+}
+
+.today-pitcher-table col.col-num {
+  width: 30px;
+}
+
+.today-pitcher-table col.col-player {
+  width: 96px;
+}
+
+.today-pitcher-table col.col-team {
+  width: 46px;
+}
+
+.today-pitcher-table col.col-game {
+  width: 104px;
+}
+
+.today-pitcher-table col.col-throws {
+  width: 38px;
+}
+
+.today-pitcher-table col.col-prev-date {
+  width: 46px;
+}
+
+.today-pitcher-table col.col-prev-opponent {
+  width: 38px;
+}
+
+.today-pitcher-table col.col-prev-result {
+  width: 34px;
+}
+
+.today-pitcher-table col.col-innings,
+.today-pitcher-table col.col-era,
+.today-pitcher-table col.col-whip,
+.today-pitcher-table col.col-kk {
+  width: 44px;
+}
+
+.today-pitcher-table col.col-count {
+  width: 30px;
+}
+
+.today-position-section {
+  border-top: 1px solid var(--line);
+}
+
+.today-position-section:first-of-type {
+  border-top: 0;
+}
+
+.today-position-section .table-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.today-position-section .table-title small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.today-lineup-table .player {
+  width: 96px;
+  min-width: 96px;
+  max-width: 96px;
+}
+
+.today-lineup-table td:nth-child(3),
+.today-lineup-table th:nth-child(3) {
+  width: 46px;
+  min-width: 46px;
+  max-width: 46px;
+}
+
+.today-lineup-table td:nth-child(4),
+.today-lineup-table th:nth-child(4) {
+  width: 112px;
+  min-width: 112px;
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.today-hitter-table td:nth-child(4),
+.today-hitter-table th:nth-child(4) {
+  width: 104px;
+  min-width: 104px;
+  max-width: 104px;
+}
+
+.today-lineup-table td:nth-child(5),
+.today-lineup-table th:nth-child(5),
+.today-hitter-table .stat-ab,
+.today-hitter-table .stat-hr,
+.today-pitcher-table .stat-games,
+.today-pitcher-table .stat-hit,
+.today-pitcher-table .stat-run,
+.today-pitcher-table .stat-er,
+.today-pitcher-table .stat-hr,
+.today-pitcher-table .stat-bb,
+.today-pitcher-table .stat-win,
+.today-pitcher-table .stat-lose,
+.today-pitcher-table .stat-save,
+.today-pitcher-table .stat-hold {
+  width: 30px;
+  min-width: 30px;
+  max-width: 30px;
+  padding-left: 3px;
+  padding-right: 3px;
+}
+
+.today-hitter-table .stat-rbi,
+.today-hitter-table .stat-war {
+  width: 38px;
+  min-width: 38px;
+  max-width: 38px;
+  padding-left: 3px;
+  padding-right: 3px;
+}
+
+.today-pitcher-table td:nth-child(5),
+.today-pitcher-table th:nth-child(5) {
+  width: 38px;
+  min-width: 38px;
+  max-width: 38px;
+}
+
+.today-pitcher-table .stat-innings,
+.today-pitcher-table .stat-era,
+.today-pitcher-table .stat-whip,
+.today-pitcher-table .stat-kk {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.today-pitcher-table .prev-date {
+  width: 46px;
+  min-width: 46px;
+  max-width: 46px;
+  padding-left: 4px;
+  padding-right: 4px;
+  white-space: nowrap;
+}
+
+.today-pitcher-table .prev-opponent {
+  width: 38px;
+  min-width: 38px;
+  max-width: 38px;
+  padding-left: 4px;
+  padding-right: 4px;
+  white-space: nowrap;
+}
+
+.today-pitcher-table .prev-result {
+  width: 34px;
+  min-width: 34px;
+  max-width: 34px;
+  padding-left: 4px;
+  padding-right: 4px;
+  white-space: nowrap;
+}
+
 .roster-hitter-table th.stat-focus,
 .roster-hitter-table td.stat-avg,
 .pitcher-roster-table th.stat-focus,
-.pitcher-roster-table td.stat-era {
+.pitcher-roster-table td.stat-era,
+.today-lineup-table th.stat-focus,
+.today-lineup-table td.stat-avg,
+.today-pitcher-table td.stat-era {
   background: #f1f3f5;
 }
 
@@ -1176,7 +1465,6 @@ th.num {
     grid-template-columns: 1fr;
   }
 
-  .game-strip,
   .game-card-head {
     grid-template-columns: 1fr;
   }
@@ -1193,20 +1481,24 @@ th.num {
     flex-direction: column;
   }
 
+  .brand-area {
+    flex-basis: auto;
+    min-width: 0;
+  }
+
   .controls {
     justify-content: stretch;
   }
 
   .controls label,
-  .controls .date-field,
   .controls .quick-nav-stack,
   .controls .settings-menu,
   .controls button {
     flex: 1 1 140px;
   }
 
-  .controls .date-field {
-    flex-basis: 220px;
+  .title-date {
+    width: min(230px, 100%);
   }
 
   .controls .quick-nav-stack {

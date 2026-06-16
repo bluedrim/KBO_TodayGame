@@ -21,6 +21,10 @@ const teamsRoot = $("#teams");
 
 const AUTO_REFRESH_MS = 45000;
 const TEAM_OVERVIEW_VALUE = "__teams__";
+const TODAY_VIEW_OPTIONS = [
+  ["fielders", "오늘의 야수", "야수"],
+  ["pitchers", "오늘의 투수", "투수"],
+];
 let loadToken = 0;
 let gameNavToken = 0;
 let autoRefreshTimer = null;
@@ -29,6 +33,7 @@ let quickGames = [];
 let quickGameDate = "";
 let selectedGameId = "";
 let rosterView = "all";
+let todayView = "";
 
 teamsRoot.dataset.mobileSection = "recent";
 
@@ -70,18 +75,35 @@ function validRosterView(value) {
   return ["all", "hitters", "pitchers"].includes(value) ? value : "all";
 }
 
+function validTodayView(value) {
+  if (["fielders", "infielders", "outfielders"].includes(value)) return "fielders";
+  return TODAY_VIEW_OPTIONS.some(([key]) => key === value) ? value : "";
+}
+
+function todayViewLabel(value = todayView) {
+  return TODAY_VIEW_OPTIONS.find(([key]) => key === value)?.[1] || "";
+}
+
+function todayViewButtonLabel(value) {
+  const option = TODAY_VIEW_OPTIONS.find(([key]) => key === value);
+  return option?.[2] || option?.[1] || "";
+}
+
 function applyUrlState() {
   const params = new URLSearchParams(window.location.search);
   const dateParam = params.get("date");
   dateInput.value = parseDateInputValue(dateParam) ? dateParam : kstDateString();
 
   rosterView = validRosterView(params.get("view"));
+  todayView = validTodayView(params.get("today"));
   const gameId = params.get("gameId") || "";
   const hasTeam = params.has("team");
   const team = hasTeam ? params.get("team") || "" : "NC";
 
-  selectedGameId = gameId;
-  if (selectedGameId) {
+  selectedGameId = todayView ? "" : gameId;
+  if (todayView) {
+    teamSelect.value = "";
+  } else if (selectedGameId) {
     teamSelect.value = "";
   } else {
     if (team) ensureTeamOption(team, team);
@@ -92,12 +114,14 @@ function applyUrlState() {
 function syncUrlState() {
   const params = new URLSearchParams();
   if (dateInput.value) params.set("date", dateInput.value);
-  if (selectedGameId) {
+  if (todayView) {
+    params.set("today", todayView);
+  } else if (selectedGameId) {
     params.set("gameId", selectedGameId);
   } else if (teamSelect.value) {
     params.set("team", teamSelect.value);
   }
-  if (rosterView !== "all") params.set("view", rosterView);
+  if (!todayView && rosterView !== "all") params.set("view", rosterView);
 
   const query = params.toString();
   const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}`;
@@ -139,6 +163,7 @@ function hasLiveGame(data) {
 }
 
 function selectedTeamLabel(data) {
+  if (todayView) return todayViewLabel();
   if (data?.view_mode === "team_overview") return "구단 전체 기록";
   if (data?.selected_game) {
     const game = (data.games || []).find((item) => String(item.game_id || "") === String(data.selected_game.game_id || ""));
@@ -277,8 +302,23 @@ function teamVs(team) {
   return `vs ${opponent} ${formatRecord(record.wins, record.draws, record.losses)}`;
 }
 
+function displayPosition(position) {
+  const text = String(position || "").trim();
+  const compact = text.replace(/\s+/g, "");
+  if (/^(포|捕|포수|C)$/i.test(compact)) return "포수";
+  if (/^(一|1|1루|1루수|일루수|1B)$/i.test(compact)) return "1루수";
+  if (/^(二|2|2루|2루수|이루수|2B)$/i.test(compact)) return "2루수";
+  if (/^(三|3|3루|3루수|삼루수|3B)$/i.test(compact)) return "3루수";
+  if (/^(유|遊|유격|유격수|SS)$/i.test(compact)) return "유격수";
+  if (/^(좌|左|좌익|좌익수|LF)$/i.test(compact)) return "좌익수";
+  if (/^(중|中|중견|중견수|CF)$/i.test(compact)) return "중견수";
+  if (/^(우|右|우익|우익수|RF)$/i.test(compact)) return "우익수";
+  if (/^(지|指|지명|지명타자|DH)$/i.test(compact)) return "지명타자";
+  return text;
+}
+
 function playerMeta(player) {
-  return [player?.position, player?.bats_throws].filter(Boolean).join(" · ");
+  return [displayPosition(player?.position), player?.bats_throws].filter(Boolean).join(" · ");
 }
 
 function playerLine(player, extra = "") {
@@ -333,7 +373,7 @@ function recentCell(player) {
   if (!records || records.error) return "-";
   const summary = records.recent_10_games?.summary || {};
   if (records.player_type === "pitcher") {
-    return `${summary.games || 0}G ${summary.innings || "0"}IP ERA ${decimal(summary.era)} WHIP ${decimal(summary.whip)} ${intish(summary.kk)}K`;
+    return `${summary.games || 0}G ERA ${decimal(summary.era)} ${summary.innings || "0"}IP WHIP ${decimal(summary.whip)} ${intish(summary.kk)}K`;
   }
   return `${avg(summary.avg)} ${hitAttempts(summary.hit, summary.ab)} ${hr(summary.hr)} ${rbi(summary.rbi)}`;
 }
@@ -423,6 +463,60 @@ function recentHitterStats(player) {
     avg: avg(summary.avg),
     ab: count(summary.ab, 3),
     ops: recentOps(summary),
+    hr: count(summary.hr, 2),
+    rbi: count(summary.rbi, 3),
+  };
+}
+
+function recentGames(player) {
+  const games = player?.records?.recent_10_games?.games;
+  return Array.isArray(games) ? games.filter((game) => game && typeof game === "object") : [];
+}
+
+function pitcherAppearanceGames(player) {
+  const games = player?.appearance_game_log?.games;
+  if (Array.isArray(games)) {
+    return games.filter((game) => game && typeof game === "object");
+  }
+  return recentGames(player);
+}
+
+function gameNumber(game, keys) {
+  return intish(statValue(game, keys));
+}
+
+function summarizeHitterGames(games, limit) {
+  const selected = games.slice(0, limit);
+  const totals = {
+    games: selected.length,
+    pa: selected.reduce((sum, game) => sum + gameNumber(game, ["pa"]), 0),
+    ab: selected.reduce((sum, game) => sum + gameNumber(game, ["ab"]), 0),
+    hit: selected.reduce((sum, game) => sum + gameNumber(game, ["hit", "h"]), 0),
+    h2: selected.reduce((sum, game) => sum + gameNumber(game, ["h2", "double"]), 0),
+    h3: selected.reduce((sum, game) => sum + gameNumber(game, ["h3", "triple"]), 0),
+    hr: selected.reduce((sum, game) => sum + gameNumber(game, ["hr", "homeRun"]), 0),
+    rbi: selected.reduce((sum, game) => sum + gameNumber(game, ["rbi"]), 0),
+    bb: selected.reduce((sum, game) => sum + gameNumber(game, ["bb", "bbhp", "baseOnBalls"]), 0),
+  };
+  const totalBases = totals.hit + totals.h2 + (2 * totals.h3) + (3 * totals.hr);
+  const obpDenominator = totals.pa || (totals.ab + totals.bb);
+  const obp = obpDenominator ? (totals.hit + totals.bb) / obpDenominator : null;
+  const slg = totals.ab ? totalBases / totals.ab : null;
+  totals.avg = totals.ab ? totals.hit / totals.ab : null;
+  totals.ops = obp !== null && slg !== null ? obp + slg : null;
+  return totals;
+}
+
+function hitterRecentPeriodStats(player, limit) {
+  const records = player?.records;
+  if (!records || records.error || records.player_type === "pitcher") {
+    return emptyHitterStats(false);
+  }
+  const summary = summarizeHitterGames(recentGames(player), limit);
+  return {
+    avg: avg(summary.avg),
+    ab: count(summary.ab, 2),
+    ops: rateFixed(summary.ops),
     hr: count(summary.hr, 2),
     rbi: count(summary.rbi, 3),
   };
@@ -524,6 +618,30 @@ function innings(value, width = 5) {
   return String(value).padStart(width, " ");
 }
 
+function inningsToOuts(value) {
+  if (value === null || value === undefined || value === "" || value === "-") return 0;
+  if (typeof value === "number") {
+    const whole = Math.trunc(value);
+    const decimal = Math.round((value - whole) * 10);
+    if (decimal === 1 || decimal === 2) return (whole * 3) + decimal;
+    return Math.round(value * 3);
+  }
+  const text = String(value).trim();
+  const spaced = text.match(/^(\d+)\s+([12])\/3$/);
+  if (spaced) return (Number(spaced[1]) * 3) + Number(spaced[2]);
+  const frac = text.match(/^(\d+)(?:\.([12]))$/);
+  if (frac) return (Number(frac[1]) * 3) + Number(frac[2]);
+  const whole = Number(text);
+  return Number.isFinite(whole) ? Math.round(whole * 3) : 0;
+}
+
+function outsToInningsText(outs) {
+  const safeOuts = intish(outs);
+  const whole = Math.trunc(safeOuts / 3);
+  const rest = safeOuts % 3;
+  return rest ? `${whole} ${rest}/3` : String(whole);
+}
+
 function emptyPitcherStats(includeWar = true) {
   const stats = {
     games: "-",
@@ -540,6 +658,45 @@ function emptyPitcherStats(includeWar = true) {
   };
   if (includeWar) stats.war = "-";
   return stats;
+}
+
+function summarizePitcherGames(games, limit) {
+  const selected = games.slice(0, limit);
+  const outs = selected.reduce((sum, game) => sum + inningsToOuts(statValue(game, ["inn", "inning", "innings"])), 0);
+  const hit = selected.reduce((sum, game) => sum + gameNumber(game, ["hit", "h"]), 0);
+  const bb = selected.reduce((sum, game) => sum + gameNumber(game, ["bb", "baseOnBalls"]), 0);
+  const er = selected.reduce((sum, game) => sum + gameNumber(game, ["er"]), 0);
+  const inningsValue = outs / 3;
+  return {
+    games: selected.length,
+    innings: outsToInningsText(outs),
+    outs,
+    era: inningsValue ? (er * 9) / inningsValue : null,
+    whip: inningsValue ? (hit + bb) / inningsValue : null,
+    hit,
+    hr: selected.reduce((sum, game) => sum + gameNumber(game, ["hr", "homeRun"]), 0),
+    bb,
+    kk: selected.reduce((sum, game) => sum + gameNumber(game, ["kk", "so", "k"]), 0),
+    r: selected.reduce((sum, game) => sum + gameNumber(game, ["r", "run"]), 0),
+    er,
+  };
+}
+
+function pitcherRecentPeriodStats(player, limit) {
+  const records = player?.records;
+  if (!records || records.error || records.player_type !== "pitcher") {
+    return emptyPitcherStats(false);
+  }
+  const summary = summarizePitcherGames(pitcherAppearanceGames(player), limit);
+  return {
+    games: count(summary.games, 2),
+    innings: innings(summary.innings),
+    era: decimal(summary.era).padStart(5, " "),
+    whip: decimal(summary.whip).padStart(4, " "),
+    hr: count(summary.hr, 2),
+    bb: count(summary.bb, 3),
+    kk: count(summary.kk, 3),
+  };
 }
 
 function recentPitcherStats(player) {
@@ -642,6 +799,18 @@ function compareNumbers(a, b, direction = "desc") {
 
 function playerNameCompare(a, b) {
   return String(a?.name || "").localeCompare(String(b?.name || ""), "ko-KR");
+}
+
+function todayHitterCompare(a, b, currentYear) {
+  const aStats = rawSeasonStats(a.player, currentYear) || {};
+  const bStats = rawSeasonStats(b.player, currentYear) || {};
+  return (
+    compareNumbers(sortNumber(aStats.avg ?? aStats.hra), sortNumber(bStats.avg ?? bStats.hra), "desc")
+    || compareNumbers(sortNumber(aStats.ab), sortNumber(bStats.ab), "desc")
+    || String(a.team?.team_name || "").localeCompare(String(b.team?.team_name || ""), "ko-KR")
+    || compareNumbers(sortNumber(a.player?.bat_order), sortNumber(b.player?.bat_order), "asc")
+    || playerNameCompare(a.player, b.player)
+  );
 }
 
 function sortedRosterHitters(players, currentYear) {
@@ -1019,7 +1188,7 @@ function renderGameQuickNav(games = quickGames) {
   gameQuickNav.hidden = false;
   const allButton = `
     <button
-      class="game-jump game-jump-all${!selectedGameId && teamSelect.value === "" ? " active" : ""}"
+      class="game-jump game-jump-all${!todayView && !selectedGameId && teamSelect.value === "" ? " active" : ""}"
       type="button"
       data-game-team=""
       data-game-team-label="전체"
@@ -1030,6 +1199,17 @@ function renderGameQuickNav(games = quickGames) {
       <small>${escapeHtml(allGames.length)}경기</small>
     </button>
   `;
+  const todayButtons = TODAY_VIEW_OPTIONS.map(([value, label]) => `
+    <button
+      class="game-jump today-jump${todayView === value ? " active" : ""}"
+      type="button"
+      data-today-view="${escapeHtml(value)}"
+      title="${escapeHtml(label)}"
+    >
+      <span>${escapeHtml(todayViewButtonLabel(value))}</span>
+      <small>라인업별</small>
+    </button>
+  `).join("");
   const gameButtons = visibleGames.map((game) => {
     const teamValue = gameJumpTeam(game);
     const label = `${game.away_team || "-"} @ ${game.home_team || "-"}`;
@@ -1049,7 +1229,7 @@ function renderGameQuickNav(games = quickGames) {
       </button>
     `;
   }).join("");
-  gameQuickNav.innerHTML = `${allButton}${gameButtons}`;
+  gameQuickNav.innerHTML = `${allButton}${todayButtons}${gameButtons}`;
 }
 
 async function loadGameQuickNav() {
@@ -1199,8 +1379,8 @@ function renderLeaguePitcherLeaders(players, seasonYear) {
               <th>선수</th>
               <th>팀</th>
               <th>G</th>
-              <th>IP</th>
               <th class="stat-focus">ERA</th>
+              <th>IP</th>
               <th>WHIP</th>
               <th>HR</th>
               <th>BB</th>
@@ -1219,7 +1399,7 @@ function renderLeaguePitcherLeaders(players, seasonYear) {
                   <td class="num">${escapeHtml(index + 1)}</td>
                   <td class="player">${playerName(player)}</td>
                   <td>${escapeHtml(player.team_name || player.team_code || "-")}</td>
-                  ${pitcherStatCells(stats, ["games", "innings", "era", "whip", "hr", "bb", "win", "lose", "save", "hold", "kk"])}
+                  ${pitcherStatCells(stats, ["games", "era", "innings", "whip", "hr", "bb", "win", "lose", "save", "hold", "kk"])}
                 </tr>
               `;
             }).join("") || `<tr><td colspan="14" class="empty-state">투수 상위권 정보 없음</td></tr>`}
@@ -1373,7 +1553,7 @@ function renderTeamOverviewStats(rows) {
 function renderTeamStats(data) {
   const rows = data.league_team_stats?.teams || [];
   const overviewMode = data.view_mode === "team_overview";
-  if (!rows.length || (!overviewMode && (data.selected_team || data.selected_game))) {
+  if (todayView || !rows.length || (!overviewMode && (data.selected_team || data.selected_game))) {
     teamStats.hidden = true;
     teamStats.innerHTML = "";
     return;
@@ -1383,6 +1563,349 @@ function renderTeamStats(data) {
     ${renderTeamOverviewStats(rows)}
     ${overviewMode ? renderLeagueCategoryLeaders(data) : ""}
     ${overviewMode ? renderLeaguePlayerLeaders(data) : ""}
+  `;
+}
+
+function isOutfielder(player) {
+  const position = displayPosition(player?.position);
+  return /좌익수|중견수|우익수|외야수|LF|CF|RF/i.test(position);
+}
+
+function isTodayHitterMatch(player, view) {
+  if (!player?.name) return false;
+  if (["fielders", "infielders", "outfielders"].includes(view)) return true;
+  return false;
+}
+
+function positionLabel(player, view) {
+  const position = displayPosition(player?.position);
+  if (view === "pitchers") return "선발투수";
+  if (/외야수/i.test(position)) return "외야수";
+  return position || "야수 기타";
+}
+
+function positionSortOrder(label, view) {
+  const order = view === "pitchers"
+    ? ["선발투수"]
+    : ["포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수", "외야수", "지명타자", "야수 기타"];
+  const index = order.indexOf(label);
+  return index === -1 ? order.length : index;
+}
+
+function gameForTeam(team, data) {
+  return (data.games || []).find((game) => String(game?.game_id || "") === String(team?.game_id || "")) || null;
+}
+
+function todayGameLabel(team, data) {
+  const game = gameForTeam(team, data);
+  if (!game) return team?.opponent?.team_name ? `${team.team_name} vs ${team.opponent.team_name}` : "-";
+  return `${game.away_team || "-"} @ ${game.home_team || "-"}`;
+}
+
+function todayHitterRows(data, view) {
+  const rows = [];
+  (data.teams || []).forEach((team) => {
+    const batters = Array.isArray(team.batting_order) ? team.batting_order : [];
+    batters.forEach((batter) => {
+      lineupEntries(batter).forEach((entry) => {
+        if (!isTodayHitterMatch(entry, view)) return;
+        rows.push({
+          team,
+          player: entry,
+          gameLabel: todayGameLabel(team, data),
+        });
+      });
+    });
+  });
+  return rows;
+}
+
+function todayPitcherRows(data) {
+  return (data.teams || [])
+    .map((team) => ({
+      team,
+      player: team.starting_pitcher || {},
+      gameLabel: todayGameLabel(team, data),
+    }))
+    .filter((row) => row.player?.name);
+}
+
+function groupTodayRows(rows, view, currentYear) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const label = positionLabel(row.player, view);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(row);
+  });
+  return Array.from(groups.entries())
+    .map(([label, groupRows]) => ({
+      label,
+      rows: view === "pitchers" ? groupRows : [...groupRows].sort((a, b) => todayHitterCompare(a, b, currentYear)),
+    }))
+    .sort((a, b) => (
+      positionSortOrder(a.label, view) - positionSortOrder(b.label, view)
+      || a.label.localeCompare(b.label, "ko-KR")
+    ));
+}
+
+function dateShort(value) {
+  const text = String(value || "");
+  const compact = text.replaceAll("-", "");
+  if (/^\d{8}$/.test(compact)) return `${compact.slice(4, 6)}.${compact.slice(6, 8)}`;
+  return text || "-";
+}
+
+function pitcherPreviousGame(player) {
+  const game = pitcherAppearanceGames(player)[0];
+  if (!game) {
+    return { date: "-", opponent: "-", result: "-", innings: "-", hit: "-", run: "-", er: "-", kk: "-" };
+  }
+  return {
+    date: dateShort(statValue(game, ["gday", "gameDate", "date"])),
+    opponent: statValue(game, ["opponent", "vsTeam", "teamName"]) || "-",
+    result: statValue(game, ["wls", "result"]) || "-",
+    innings: innings(statValue(game, ["inn", "inning", "innings"])),
+    hit: count(statValue(game, ["hit", "h"]), 2),
+    run: count(statValue(game, ["r", "run"]), 2),
+    er: count(statValue(game, ["er"]), 2),
+    kk: count(statValue(game, ["kk", "so", "k"]), 3),
+  };
+}
+
+function renderTodayHitterRow(row, index, currentYear) {
+  const player = row.player;
+  const recent5 = hitterRecentPeriodStats(player, 5);
+  const recent10 = hitterRecentPeriodStats(player, 10);
+  const season = seasonHitterStats(player, currentYear);
+  return `
+    <tr${rowClass(player)}>
+      <td class="num">${escapeHtml(index + 1)}</td>
+      <td class="player">${playerName(player)}</td>
+      <td>${escapeHtml(row.team?.team_name || "-")}</td>
+      <td>${escapeHtml(row.gameLabel)}</td>
+      <td class="stat number-stat">${escapeHtml(player.bat_order || "-")}</td>
+      ${hitterStatCells(recent5, ["avg", "ab", "ops", "hr", "rbi"])}
+      ${hitterStatCells(recent10, ["avg", "ab", "ops", "hr", "rbi"])}
+      ${hitterStatCells(season, ["avg", "ab", "ops", "hr", "rbi", "war"])}
+    </tr>
+  `;
+}
+
+function renderTodayPitcherRow(row, index, currentYear) {
+  const player = row.player;
+  const previous = pitcherPreviousGame(player);
+  const recent5 = pitcherRecentPeriodStats(player, 5);
+  const season = pitcherSeasonStats(player, currentYear);
+  return `
+    <tr>
+      <td class="num">${escapeHtml(index + 1)}</td>
+      <td class="player">${playerName(player)}</td>
+      <td>${escapeHtml(row.team?.team_name || "-")}</td>
+      <td>${escapeHtml(row.gameLabel)}</td>
+      <td>${escapeHtml(player.bats_throws || "-")}</td>
+      <td class="stat prev-date">${escapeHtml(previous.date)}</td>
+      <td class="prev-opponent">${escapeHtml(previous.opponent)}</td>
+      <td class="stat prev-result">${escapeHtml(previous.result)}</td>
+      ${pitcherStatCells(previous, ["innings", "hit", "run", "er", "kk"])}
+      ${pitcherStatCells(recent5, ["games", "era", "innings", "whip", "hr", "bb", "kk"])}
+      ${pitcherStatCells(season, ["games", "era", "innings", "whip", "hr", "bb", "win", "lose", "save", "hold", "kk"])}
+    </tr>
+  `;
+}
+
+function renderTodayHitterTable(rows, currentYear) {
+  return `
+    <div class="table-scroll">
+      <table class="lineup-table today-lineup-table today-hitter-table">
+        <colgroup>
+          <col class="col-num">
+          <col class="col-player">
+          <col class="col-team">
+          <col class="col-game">
+          <col class="col-order">
+          <col class="col-avg">
+          <col class="col-ab">
+          <col class="col-ops">
+          <col class="col-count">
+          <col class="col-rbi">
+          <col class="col-avg">
+          <col class="col-ab">
+          <col class="col-ops">
+          <col class="col-count col-recent10-hr">
+          <col class="col-rbi col-recent10-rbi">
+          <col class="col-avg">
+          <col class="col-ab">
+          <col class="col-ops">
+          <col class="col-count">
+          <col class="col-rbi">
+          <col class="col-war">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="num" rowspan="2">순</th>
+            <th rowspan="2">선수</th>
+            <th rowspan="2">팀</th>
+            <th rowspan="2">경기</th>
+            <th rowspan="2">타순</th>
+            <th class="group-head" colspan="5">최근5G</th>
+            <th class="group-head" colspan="5">최근10G</th>
+            <th class="group-head" colspan="6">${escapeHtml(currentYear)}년 성적</th>
+          </tr>
+          <tr class="sub-head">
+            <th class="stat-focus">AVG</th>
+            <th>AB</th>
+            <th>OPS</th>
+            <th>HR</th>
+            <th>RBI</th>
+            <th class="stat-focus">AVG</th>
+            <th>AB</th>
+            <th>OPS</th>
+            <th>HR</th>
+            <th>RBI</th>
+            <th class="stat-focus">AVG</th>
+            <th>AB</th>
+            <th>OPS</th>
+            <th>HR</th>
+            <th>RBI</th>
+            <th>WAR</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row, index) => renderTodayHitterRow(row, index, currentYear)).join("") || `<tr><td colspan="21" class="empty-state">표시할 야수 정보가 없습니다.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderTodayPitcherTable(rows, currentYear) {
+  return `
+    <div class="table-scroll">
+      <table class="lineup-table today-lineup-table today-pitcher-table">
+        <colgroup>
+          <col class="col-num">
+          <col class="col-player">
+          <col class="col-team">
+          <col class="col-game">
+          <col class="col-throws">
+          <col class="col-prev-date">
+          <col class="col-prev-opponent">
+          <col class="col-prev-result">
+          <col class="col-innings">
+          <col class="col-count">
+          <col class="col-count">
+          <col class="col-count">
+          <col class="col-kk">
+          <col class="col-count">
+          <col class="col-era">
+          <col class="col-innings">
+          <col class="col-whip">
+          <col class="col-count">
+          <col class="col-count">
+          <col class="col-kk">
+          <col class="col-count">
+          <col class="col-era">
+          <col class="col-innings">
+          <col class="col-whip">
+          <col class="col-count">
+          <col class="col-count">
+          <col class="col-count">
+          <col class="col-count">
+          <col class="col-count">
+          <col class="col-count">
+          <col class="col-kk">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="num" rowspan="2">순</th>
+            <th rowspan="2">선수</th>
+            <th rowspan="2">팀</th>
+            <th rowspan="2">경기</th>
+            <th rowspan="2">투구</th>
+            <th class="group-head" colspan="8">직전경기</th>
+            <th class="group-head" colspan="7">최근5경기출전</th>
+            <th class="group-head" colspan="11">${escapeHtml(currentYear)}년 성적</th>
+          </tr>
+          <tr class="sub-head">
+            <th class="prev-date">일자</th>
+            <th class="prev-opponent">상대</th>
+            <th class="prev-result">결과</th>
+            <th class="stat-innings">IP</th>
+            <th class="stat-hit">H</th>
+            <th class="stat-run">R</th>
+            <th class="stat-er">ER</th>
+            <th class="stat-kk">K</th>
+            <th class="stat-games">G</th>
+            <th class="stat-focus stat-era">ERA</th>
+            <th class="stat-innings">IP</th>
+            <th class="stat-whip">WHIP</th>
+            <th class="stat-hr">HR</th>
+            <th class="stat-bb">BB</th>
+            <th class="stat-kk">K</th>
+            <th class="stat-games">G</th>
+            <th class="stat-focus stat-era">ERA</th>
+            <th class="stat-innings">IP</th>
+            <th class="stat-whip">WHIP</th>
+            <th class="stat-hr">HR</th>
+            <th class="stat-bb">BB</th>
+            <th class="stat-win">W</th>
+            <th class="stat-lose">L</th>
+            <th class="stat-save">SV</th>
+            <th class="stat-hold">HLD</th>
+            <th class="stat-kk">K</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row, index) => renderTodayPitcherRow(row, index, currentYear)).join("") || `<tr><td colspan="31" class="empty-state">표시할 선발 투수 정보가 없습니다.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderTodayPositionSections(data, rows) {
+  const currentYear = Number(data.season_year || String(data.target_date || "").slice(0, 4));
+  const groups = groupTodayRows(rows, todayView, currentYear);
+  if (!groups.length) {
+    return `<div class="empty-state">표시할 선수 정보가 없습니다.</div>`;
+  }
+  return groups.map((group) => `
+    <section class="today-position-section">
+      <div class="table-title">
+        <span>${escapeHtml(group.label)}</span>
+        <small>${escapeHtml(group.rows.length)}명</small>
+      </div>
+      ${todayView === "pitchers"
+        ? renderTodayPitcherTable(group.rows, currentYear)
+        : renderTodayHitterTable(group.rows, currentYear)}
+    </section>
+  `).join("");
+}
+
+function renderTodayLineupView(data) {
+  const title = todayViewLabel();
+  const rows = todayView === "pitchers" ? todayPitcherRows(data) : todayHitterRows(data, todayView);
+  const teamCount = new Set(rows.map((row) => row.team?.team_code || row.team?.team_name).filter(Boolean)).size;
+  return `
+    <article class="team-panel today-panel selected">
+      <div class="team-head">
+        <div>
+          <div class="team-title">
+            <h2>${escapeHtml(title)}</h2>
+            <span class="chip">${escapeHtml(data.target_date)} 라인업</span>
+          </div>
+          <div class="status">오늘 라인업 기준으로 포지션별 선수를 모아 표시합니다.</div>
+        </div>
+        <div class="record-line">
+          <span class="chip">${escapeHtml(teamCount)}팀</span>
+          <span class="chip">${escapeHtml(rows.length)}명</span>
+        </div>
+      </div>
+      <section class="team-section">
+        <div class="table-title">${escapeHtml(title)} · 포지션별 · ${todayView === "pitchers" ? "직전경기 / 최근5경기출전 / 올해성적" : "최근5G / 최근10G / 올해성적"}</div>
+        ${renderTodayPositionSections(data, rows)}
+      </section>
+    </article>
   `;
 }
 
@@ -1407,10 +1930,10 @@ function renderRosterPitcherRow(player, yearColumns, displayOrder) {
     <tr>
       <td class="num">${escapeHtml(displayOrder || "-")}</td>
       <td class="player">${playerName(player)}</td>
-      ${pitcherStatCells(recent, ["games", "innings", "era", "whip", "hr", "bb", "kk"])}
+      ${pitcherStatCells(recent, ["games", "era", "innings", "whip", "hr", "bb", "kk"])}
       ${yearColumns.map((year) => {
         const season = pitcherSeasonStats(player, year);
-        return pitcherStatCells(season, ["games", "innings", "era", "whip", "hr", "bb", "win", "lose", "save", "hold", "kk"]);
+        return pitcherStatCells(season, ["games", "era", "innings", "whip", "hr", "bb", "win", "lose", "save", "hold", "kk"]);
       }).join("")}
     </tr>
   `;
@@ -1527,8 +2050,8 @@ function renderRosterTeamContext(team) {
                   <th>K</th>
                   <th>SB</th>
                   <th class="stat-focus">ERA</th>
-                  <th>WHIP</th>
                   <th>IP</th>
+                  <th>WHIP</th>
                   <th>H</th>
                   <th>HR</th>
                   <th>BB</th>
@@ -1564,8 +2087,8 @@ function renderRosterTeamContext(team) {
                     ${statCell(count(batting.kk, 3), "kk")}
                     ${statCell(count(batting.sb, 2), "sb")}
                     ${statCell(decimal(pitching.era), "era")}
-                    ${statCell(decimal(pitching.whip), "whip")}
                     ${statCell(pitching.innings || "-", "innings")}
+                    ${statCell(decimal(pitching.whip), "whip")}
                     ${statCell(count(pitching.hit, 3), "hit")}
                     ${statCell(count(pitching.hr, 2), "hr")}
                     ${statCell(count(pitching.bb, 3), "bb")}
@@ -1678,16 +2201,16 @@ function renderRosterTeamPanel(team, data) {
               </tr>
               <tr class="sub-head">
                 <th>G</th>
-                <th>IP</th>
                 <th class="stat-focus">ERA</th>
+                <th>IP</th>
                 <th>WHIP</th>
                 <th>HR</th>
                 <th>BB</th>
                 <th>K</th>
                 ${yearColumns.map(() => `
                   <th>G</th>
-                  <th>IP</th>
                   <th class="stat-focus">ERA</th>
+                  <th>IP</th>
                   <th>WHIP</th>
                   <th>HR</th>
                   <th>BB</th>
@@ -1914,6 +2437,11 @@ function renderTeamPanel(team, data) {
 function renderTeams(data) {
   const teams = data.teams || [];
   teamsRoot.dataset.mobileSection = teamsRoot.dataset.mobileSection || "recent";
+  if (todayView) {
+    teamsRoot.dataset.mobileSection = "recent";
+    teamsRoot.innerHTML = renderTodayLineupView(data);
+    return;
+  }
   if (data.view_mode === "team_overview") {
     teamsRoot.innerHTML = "";
     return;
@@ -1952,9 +2480,9 @@ function showError(message) {
 function buildLineupParams({ includeRecords = true, refreshDailyStats = false, refreshHistoryMode = false } = {}) {
   const params = new URLSearchParams({
     date: dateInput.value,
-    team: teamSelect.value,
+    team: todayView ? "" : teamSelect.value,
   });
-  if (selectedGameId) params.set("gameId", selectedGameId);
+  if (!todayView && selectedGameId) params.set("gameId", selectedGameId);
   if (!includeRecords) params.set("noPlayerRecords", "1");
   if (refreshHistoryMode) params.set("refreshHistory", "1");
   if (refreshDailyStats) params.set("refreshDailyStats", "1");
@@ -2053,6 +2581,7 @@ controls.addEventListener("submit", (event) => {
   loadData({ progressive: true });
 });
 teamSelect.addEventListener("change", () => {
+  todayView = "";
   selectedGameId = "";
   renderGameQuickNav(quickGames);
   renderTeamQuickNav();
@@ -2060,17 +2589,42 @@ teamSelect.addEventListener("change", () => {
   loadData({ progressive: true });
 });
 function handleDateChange() {
+  todayView = "";
   selectedGameId = "";
   loadGameQuickNav();
   syncUrlState();
   loadData({ progressive: true });
 }
+
+function loadTodayFromRefresh(options = {}) {
+  dateInput.value = kstDateString();
+  selectedGameId = "";
+  renderGameQuickNav(quickGames);
+  renderTeamQuickNav();
+  syncUrlState();
+  loadGameQuickNav();
+  loadData(options);
+}
+
 dateInput.addEventListener("change", handleDateChange);
 prevDateButton.addEventListener("click", () => changeDateBy(-1));
 nextDateButton.addEventListener("click", () => changeDateBy(1));
 gameQuickNav.addEventListener("click", (event) => {
+  const todayButton = event.target.closest(".today-jump");
+  if (todayButton) {
+    todayView = validTodayView(todayButton.dataset.todayView);
+    selectedGameId = "";
+    teamSelect.value = "";
+    renderGameQuickNav(quickGames);
+    renderTeamQuickNav();
+    syncUrlState();
+    loadData({ progressive: true });
+    return;
+  }
+
   const button = event.target.closest(".game-jump");
   if (!button) return;
+  todayView = "";
   selectedGameId = button.dataset.gameId || "";
   teamSelect.value = "";
   renderGameQuickNav(quickGames);
@@ -2081,6 +2635,7 @@ gameQuickNav.addEventListener("click", (event) => {
 teamQuickNav.addEventListener("click", (event) => {
   const button = event.target.closest(".team-jump");
   if (!button) return;
+  todayView = "";
   const value = button.dataset.teamValue || "";
   ensureTeamOption(value, button.dataset.teamLabel || value || "전체");
   teamSelect.value = value;
@@ -2090,8 +2645,8 @@ teamQuickNav.addEventListener("click", (event) => {
   syncUrlState();
   loadData({ progressive: true });
 });
-refreshGameButton.addEventListener("click", () => loadData({ progressive: true }));
-refreshTodayStats.addEventListener("click", () => loadData({ progressive: false, refreshDailyStats: true }));
+refreshGameButton.addEventListener("click", () => loadTodayFromRefresh({ progressive: true }));
+refreshTodayStats.addEventListener("click", () => loadTodayFromRefresh({ progressive: false, refreshDailyStats: true }));
 autoRefresh.addEventListener("change", () => {
   if (latestData) scheduleAutoRefresh(latestData);
 });
