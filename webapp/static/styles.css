@@ -87,6 +87,18 @@ h1 {
   margin-top: 3px;
 }
 
+.footer-settings-menu {
+  width: max-content;
+  margin-top: 8px;
+  margin-left: auto;
+}
+
+.footer-settings-menu .settings-panel {
+  top: auto;
+  bottom: calc(100% + 6px);
+  right: 0;
+}
+
 .cache-detail {
   display: inline-flex;
   gap: 4px;
@@ -124,11 +136,35 @@ h1 {
   justify-content: flex-end;
 }
 
-.quick-nav-stack {
+.quick-nav-shell {
   display: grid;
   gap: 5px;
   flex: 1 1 620px;
   min-width: min(620px, 100%);
+}
+
+.quick-nav-stack {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.quick-nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+.quick-nav-toggle small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
 }
 
 .game-quick-nav,
@@ -211,6 +247,12 @@ button {
   border-color: var(--line);
   background: var(--surface);
   color: var(--ink);
+}
+
+.secondary-button.active {
+  border-color: var(--accent);
+  background: #e4f1ec;
+  color: #123f30;
 }
 
 .game-jump {
@@ -369,10 +411,20 @@ button:disabled {
   overflow-x: auto;
 }
 
+.game-strip-detail {
+  grid-template-columns: 1fr;
+  gap: 10px;
+  overflow-x: visible;
+}
+
 .game-card {
   min-width: 0;
   padding: 8px 9px;
   overflow: hidden;
+}
+
+.game-card-detail {
+  padding: 12px;
 }
 
 .game-card-head {
@@ -382,12 +434,22 @@ button:disabled {
   align-items: center;
 }
 
+.game-card-detail .game-card-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
 .game-card strong {
   overflow: hidden;
   font-size: 15px;
   line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.game-card-detail strong {
+  font-size: 18px;
+  white-space: normal;
 }
 
 .game-meta {
@@ -401,6 +463,42 @@ button:disabled {
   min-height: 20px;
   padding: 1px 5px;
   font-size: 10px;
+}
+
+.game-card-detail .chip {
+  min-height: 24px;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.game-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.game-detail-summary div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fafb;
+}
+
+.game-detail-summary span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.game-detail-summary strong {
+  overflow: visible;
+  font-size: 14px;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .scoreboard {
@@ -476,6 +574,12 @@ button:disabled {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.game-card-detail .timeline-text {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .timeline-score {
@@ -1501,8 +1605,13 @@ th.num {
     grid-template-columns: 1fr;
   }
 
-  .game-card-head {
+  .game-card-head,
+  .game-card-detail .game-card-head {
     grid-template-columns: 1fr;
+  }
+
+  .game-detail-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1527,8 +1636,7 @@ th.num {
   }
 
   .controls label,
-  .controls .quick-nav-stack,
-  .controls .settings-menu,
+  .controls .quick-nav-shell,
   .controls button {
     flex: 1 1 140px;
   }
@@ -1537,9 +1645,21 @@ th.num {
     width: min(230px, 100%);
   }
 
-  .controls .quick-nav-stack {
+  .controls .quick-nav-shell {
     flex-basis: 100%;
     min-width: 0;
+  }
+
+  .quick-nav-toggle {
+    display: flex;
+  }
+
+  .quick-nav-panel {
+    display: none;
+  }
+
+  .quick-nav-panel.open {
+    display: grid;
   }
 
   .game-quick-nav,
@@ -1552,9 +1672,32 @@ th.num {
     flex: 1 1 118px;
   }
 
+  .game-card-detail {
+    padding: 10px;
+  }
+
+  .game-detail-summary {
+    grid-template-columns: 1fr;
+  }
+
   .settings-panel {
     left: 0;
     right: auto;
+  }
+
+  .footer-settings-menu {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .footer-settings-menu summary {
+    justify-content: center;
+  }
+
+  .footer-settings-menu .settings-panel {
+    right: 0;
+    bottom: calc(100% + 6px);
+    width: auto;
   }
 
   .metric-grid {

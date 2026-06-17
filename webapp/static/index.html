@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>KBO 오늘의 경기</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260616-status-footer">
+    <link rel="stylesheet" href="/static/styles.css?v=20260617-innings-dot-zero">
   </head>
   <body>
     <main class="app-shell">
@@ -21,9 +21,15 @@
           </div>
         </div>
         <form id="controls" class="controls">
-          <div class="quick-nav-stack">
-            <div id="gameQuickNav" class="game-quick-nav" aria-label="선택 날짜 경기 바로가기"></div>
-            <div id="teamQuickNav" class="team-quick-nav" aria-label="팀 바로가기"></div>
+          <div class="quick-nav-shell">
+            <button id="quickNavToggle" class="secondary-button quick-nav-toggle" type="button" aria-expanded="false" aria-controls="quickNavPanel">
+              <span id="quickNavToggleLabel">경기/팀 선택</span>
+              <small id="quickNavToggleState">열기</small>
+            </button>
+            <div id="quickNavPanel" class="quick-nav-stack quick-nav-panel">
+              <div id="gameQuickNav" class="game-quick-nav" aria-label="선택 날짜 경기 바로가기"></div>
+              <div id="teamQuickNav" class="team-quick-nav" aria-label="팀 바로가기"></div>
+            </div>
           </div>
           <label hidden>
             <span>팀</span>
@@ -41,20 +47,6 @@
               <option value="__teams__">전체</option>
             </select>
           </label>
-          <details class="settings-menu">
-            <summary>설정</summary>
-            <div class="settings-panel">
-              <label class="checkline">
-                <input id="autoRefresh" type="checkbox" name="autoRefresh" checked>
-                <span>경기 중 자동 갱신</span>
-              </label>
-              <label class="checkline">
-                <input id="refreshHistory" type="checkbox" name="refreshHistory">
-                <span>3년 기록 갱신</span>
-              </label>
-              <button id="refreshTodayStats" class="secondary-button" type="button">오늘 선수성적 갱신</button>
-            </div>
-          </details>
           <button id="refreshGameButton" class="secondary-button" type="button">경기상황</button>
           <button type="submit">조회</button>
         </form>
@@ -68,8 +60,22 @@
         <p id="statusLine">라인업과 상대 기록을 불러오는 중</p>
         <p id="cacheLine" class="meta-line"></p>
         <p id="networkLine" class="meta-line"></p>
+        <details class="settings-menu footer-settings-menu">
+          <summary>설정</summary>
+          <div class="settings-panel">
+            <label class="checkline">
+              <input id="autoRefresh" type="checkbox" name="autoRefresh" checked>
+              <span>경기 중 자동 갱신</span>
+            </label>
+            <label class="checkline">
+              <input id="refreshHistory" type="checkbox" name="refreshHistory">
+              <span>3년 기록 갱신</span>
+            </label>
+            <button id="refreshTodayStats" class="secondary-button" type="button">오늘 선수성적 갱신</button>
+          </div>
+        </details>
       </footer>
     </main>
-    <script src="/static/app.js?v=20260616-status-footer"></script>
+    <script src="/static/app.js?v=20260617-innings-dot-zero"></script>
   </body>
 </html>

@@ -4,6 +4,9 @@ const controls = $("#controls");
 const dateInput = $("#dateInput");
 const prevDateButton = $("#prevDateButton");
 const nextDateButton = $("#nextDateButton");
+const quickNavToggle = $("#quickNavToggle");
+const quickNavPanel = $("#quickNavPanel");
+const quickNavToggleState = $("#quickNavToggleState");
 const gameQuickNav = $("#gameQuickNav");
 const teamQuickNav = $("#teamQuickNav");
 const teamSelect = $("#teamSelect");
@@ -35,6 +38,7 @@ let selectedGameId = "";
 let rosterView = "all";
 let todayView = "";
 let todayPositionFilter = "";
+let gameStatusView = false;
 
 teamsRoot.dataset.mobileSection = "recent";
 
@@ -92,6 +96,21 @@ function todayViewButtonLabel(value) {
 
 function resetTodayPositionFilter() {
   todayPositionFilter = "";
+}
+
+function isMobileViewport() {
+  return window.matchMedia("(max-width: 720px)").matches;
+}
+
+function setQuickNavOpen(open) {
+  if (!quickNavToggle || !quickNavPanel) return;
+  quickNavPanel.classList.toggle("open", Boolean(open));
+  quickNavToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  if (quickNavToggleState) quickNavToggleState.textContent = open ? "접기" : "열기";
+}
+
+function closeQuickNavOnMobile() {
+  if (isMobileViewport()) setQuickNavOpen(false);
 }
 
 function applyUrlState() {
@@ -168,6 +187,7 @@ function hasLiveGame(data) {
 }
 
 function selectedTeamLabel(data) {
+  if (gameStatusView) return "경기상황";
   if (todayView) return todayViewLabel();
   if (data?.view_mode === "team_overview") return "구단 전체 기록";
   if (data?.selected_game) {
@@ -380,7 +400,7 @@ function recentCell(player) {
   if (!records || records.error) return "-";
   const summary = records.recent_10_games?.summary || {};
   if (records.player_type === "pitcher") {
-    return `${summary.games || 0}G ERA ${decimal(summary.era)} ${summary.innings || "0"}IP WHIP ${decimal(summary.whip)} ${intish(summary.kk)}K`;
+    return `${summary.games || 0}G ERA ${decimal(summary.era)} ${formatInnings(summary.innings || "0")}IP WHIP ${decimal(summary.whip)} ${intish(summary.kk)}K`;
   }
   return `${avg(summary.avg)} ${hitAttempts(summary.hit, summary.ab)} ${hr(summary.hr)} ${rbi(summary.rbi)}`;
 }
@@ -398,7 +418,7 @@ function vsTeamCell(player, includeOpponent = false) {
     if ((stats.inn === undefined || stats.inn === "" || stats.inn === "-") && (stats.era === undefined || stats.era === "" || stats.era === "-")) {
       return includeOpponent ? `vs ${opponent}: 올해 전적 없음` : "올해 전적 없음";
     }
-    return `${prefix}ERA ${decimal(stats.era)} ${stats.inn || "-"}IP ${intish(stats.w)}-${intish(stats.l)} ${intish(stats.kk)}K WHIP ${decimal(stats.whip)}`;
+    return `${prefix}ERA ${decimal(stats.era)} ${formatInnings(stats.inn)}IP ${intish(stats.w)}-${intish(stats.l)} ${intish(stats.kk)}K WHIP ${decimal(stats.whip)}`;
   }
 
   return `${prefix}${rate(stats.hra)} ${hitAttempts(stats.hit, stats.ab)} OPS ${rateFixed(stats.ops)} ${hr(stats.hr)} ${rbi(stats.rbi)}`;
@@ -620,9 +640,31 @@ function statValue(data, keys) {
   return undefined;
 }
 
+function formatInnings(value) {
+  if (value === null || value === undefined || value === "" || value === "-") return "-";
+  if (typeof value === "number") {
+    const whole = Math.trunc(value);
+    const decimal = Math.round((value - whole) * 10);
+    if (decimal === 0) return `${whole}.0`;
+    if (decimal === 1 || decimal === 2) return `${whole}.${decimal}`;
+    return outsToInningsText(Math.round(value * 3));
+  }
+
+  const text = String(value).trim().replace("⅓", " 1/3").replace("⅔", " 2/3");
+  if (!text) return "-";
+  const spaced = text.match(/^(\d+)\s+([12])\/3$/);
+  if (spaced) return `${Number(spaced[1])}.${Number(spaced[2])}`;
+  const dotted = text.match(/^(\d+)(?:\.([012]))?$/);
+  if (dotted) {
+    const whole = Number(dotted[1]);
+    const rest = Number(dotted[2] || 0);
+    return rest ? `${whole}.${rest}` : `${whole}.0`;
+  }
+  return text;
+}
+
 function innings(value, width = 5) {
-  if (value === null || value === undefined || value === "" || value === "-") return "-".padStart(width, " ");
-  return String(value).padStart(width, " ");
+  return formatInnings(value).padStart(width, " ");
 }
 
 function inningsToOuts(value) {
@@ -646,7 +688,7 @@ function outsToInningsText(outs) {
   const safeOuts = intish(outs);
   const whole = Math.trunc(safeOuts / 3);
   const rest = safeOuts % 3;
-  return rest ? `${whole} ${rest}/3` : String(whole);
+  return rest ? `${whole}.${rest}` : `${whole}.0`;
 }
 
 function emptyPitcherStats(includeWar = true) {
@@ -765,7 +807,8 @@ function pitcherSeasonStats(player, targetYear) {
 
 function statCell(value, field = "") {
   const className = field ? ` stat-${field}` : "";
-  return `<td class="stat number-stat${className}">${escapeHtml(value)}</td>`;
+  const displayValue = field === "innings" ? formatInnings(value) : value;
+  return `<td class="stat number-stat${className}">${escapeHtml(displayValue)}</td>`;
 }
 
 function hitterStatCells(stats, fields) {
@@ -790,9 +833,11 @@ function inningsSortValue(value) {
   if (value === null || value === undefined || value === "" || value === "-") return NaN;
   if (typeof value === "number") return value;
   const text = String(value).trim();
-  const match = text.match(/^(\d+)(?:\s+([12])\/3)?$/);
-  if (!match) return sortNumber(value);
-  return Number(match[1]) + (match[2] ? Number(match[2]) / 3 : 0);
+  const spaced = text.match(/^(\d+)\s+([12])\/3$/);
+  if (spaced) return Number(spaced[1]) + (Number(spaced[2]) / 3);
+  const dotted = text.match(/^(\d+)(?:\.([12]))?$/);
+  if (dotted) return Number(dotted[1]) + (dotted[2] ? Number(dotted[2]) / 3 : 0);
+  return sortNumber(value);
 }
 
 function compareNumbers(a, b, direction = "desc") {
@@ -1009,10 +1054,41 @@ function scoreChip(game) {
   return `${game.away_score} : ${game.home_score}`;
 }
 
-function renderScoreboard(game) {
-  const board = game?.scoreboard;
+function detailScoreboardFallback(game, detail = false) {
+  if (!detail || isCancelledGame(game)) return null;
+  return {
+    visible: true,
+    columns: [],
+    teams: [
+      {
+        name: game?.away_team || "-",
+        scores: [],
+        r: game?.away_score,
+      },
+      {
+        name: game?.home_team || "-",
+        scores: [],
+        r: game?.home_score,
+      },
+    ],
+  };
+}
+
+function scoreboardColumns(board, detail = false) {
+  const columns = Array.isArray(board?.columns) ? board.columns.map((column) => String(column)) : [];
+  const scoreCount = Array.isArray(board?.teams)
+    ? Math.max(0, ...board.teams.map((row) => Array.isArray(row?.scores) ? row.scores.length : 0))
+    : 0;
+  const minimumCount = detail ? 9 : columns.length;
+  const columnCount = Math.max(minimumCount, columns.length, scoreCount);
+  return Array.from({ length: columnCount }, (_, index) => columns[index] || String(index + 1));
+}
+
+function renderScoreboard(game, detail = false) {
+  const sourceBoard = game?.scoreboard;
+  const board = sourceBoard?.visible ? sourceBoard : detailScoreboardFallback(game, detail);
   if (!board?.visible || !Array.isArray(board.teams) || !board.teams.length) return "";
-  const columns = Array.isArray(board.columns) ? board.columns : [];
+  const columns = scoreboardColumns(board, detail);
   return `
     <div class="scoreboard">
       <table>
@@ -1023,6 +1099,7 @@ function renderScoreboard(game) {
             <th>R</th>
             <th>H</th>
             <th>E</th>
+            <th>B</th>
           </tr>
         </thead>
         <tbody>
@@ -1033,6 +1110,7 @@ function renderScoreboard(game) {
               <td class="score-total">${escapeHtml(totalScore(row.r))}</td>
               <td class="score-total">${escapeHtml(totalScore(row.h))}</td>
               <td class="score-total">${escapeHtml(totalScore(row.e))}</td>
+              <td class="score-total">${escapeHtml(totalScore(row.b))}</td>
             </tr>
           `).join("")}
         </tbody>
@@ -1060,20 +1138,56 @@ function renderGameTimeline(game) {
   `;
 }
 
-function renderGameCard(game, data) {
+function renderGameDetailSummary(game) {
+  const summary = game?.live_summary || {};
+  const scoreText = summary.score || `${game.away_team || "-"} ${totalScore(game.away_score)}-${totalScore(game.home_score)} ${game.home_team || "-"}`;
+  const situationText = summary.situation || game.status || "-";
+  const batterText = summary.batters || "-";
+  const pitcherText = summary.pitcher || [
+    game.away_current_pitcher_name ? `${game.away_team} ${game.away_current_pitcher_name}` : "",
+    game.home_current_pitcher_name ? `${game.home_team} ${game.home_current_pitcher_name}` : "",
+  ].filter(Boolean).join(" / ") || "-";
   return `
-    <article class="game-card">
+    <div class="game-detail-summary">
+      <div>
+        <span>점수</span>
+        <strong>${escapeHtml(scoreText)}</strong>
+      </div>
+      <div>
+        <span>상황</span>
+        <strong>${escapeHtml(situationText)}</strong>
+      </div>
+      <div>
+        <span>타자</span>
+        <strong>${escapeHtml(batterText)}</strong>
+      </div>
+      <div>
+        <span>투수</span>
+        <strong>${escapeHtml(pitcherText)}</strong>
+      </div>
+    </div>
+  `;
+}
+
+function renderGameCard(game, data, detail = false) {
+  const cardClass = detail ? "game-card game-card-detail" : "game-card";
+  const matchupTitle = `${game.away_team || "-"} @ ${game.home_team || "-"}${detail && game.stadium ? ` ${game.stadium}` : ""}`;
+  return `
+    <article class="${cardClass}">
       <div class="game-card-head">
-        <strong>${escapeHtml(game.away_team)} @ ${escapeHtml(game.home_team)}</strong>
+        <div>
+          <strong>${escapeHtml(matchupTitle)}</strong>
+        </div>
         <div class="game-meta">
           <span class="chip">${escapeHtml(game.time || "-")}</span>
-          <span class="chip">${escapeHtml(game.stadium || "-")}</span>
+          ${detail ? "" : `<span class="chip">${escapeHtml(game.stadium || "-")}</span>`}
           <span class="chip">${escapeHtml(scoreChip(game))}</span>
           <span class="chip">${escapeHtml(data.target_date)} KST</span>
         </div>
       </div>
-      ${renderScoreboard(game)}
-      ${renderGameTimeline(game)}
+      ${detail ? renderGameDetailSummary(game) : ""}
+      ${renderScoreboard(game, detail)}
+      ${detail ? "" : renderGameTimeline(game)}
     </article>
   `;
 }
@@ -1086,7 +1200,9 @@ function renderGameStrip(data) {
     return;
   }
   gameStrip.hidden = false;
-  gameStrip.innerHTML = games.map((game) => renderGameCard(game, data)).join("");
+  const detail = gameStatusView || Boolean(data.selected_game);
+  gameStrip.classList.toggle("game-strip-detail", detail);
+  gameStrip.innerHTML = games.map((game) => renderGameCard(game, data, detail)).join("");
 }
 
 function teamOptionValue(candidates) {
@@ -1236,7 +1352,7 @@ function renderGameQuickNav(games = quickGames) {
       </button>
     `;
   }).join("");
-  gameQuickNav.innerHTML = `${allButton}${todayButtons}${gameButtons}`;
+  gameQuickNav.innerHTML = `${todayButtons}${gameButtons}${allButton}`;
 }
 
 async function loadGameQuickNav() {
@@ -1285,7 +1401,7 @@ function matchupPitcherForTeam(team, batters, data) {
 function pitcherTodayLine(player) {
   const today = player?.today;
   if (!today) return "";
-  return `오늘 ${today.inn || "-"}IP ${intish(today.hit)}H ${intish(today.run)}R ${intish(today.er)}ER ${intish(today.kk)}K`;
+  return `오늘 ${formatInnings(today.inn)}IP ${intish(today.hit)}H ${intish(today.run)}R ${intish(today.er)}ER ${intish(today.kk)}K`;
 }
 
 function samePitcher(left, right) {
@@ -2510,7 +2626,7 @@ function setMobileSection(section) {
 }
 
 function setLoading(isLoading, message = "데이터 수집 중") {
-  controls.querySelectorAll("button").forEach((button) => {
+  [...controls.querySelectorAll("button"), refreshTodayStats].filter(Boolean).forEach((button) => {
     button.disabled = isLoading;
   });
   if (isLoading) statusLine.textContent = message;
@@ -2524,9 +2640,9 @@ function showError(message) {
 function buildLineupParams({ includeRecords = true, refreshDailyStats = false, refreshHistoryMode = false } = {}) {
   const params = new URLSearchParams({
     date: dateInput.value,
-    team: todayView ? "" : teamSelect.value,
+    team: gameStatusView || todayView ? "" : teamSelect.value,
   });
-  if (!todayView && selectedGameId) params.set("gameId", selectedGameId);
+  if (!gameStatusView && !todayView && selectedGameId) params.set("gameId", selectedGameId);
   if (!includeRecords) params.set("noPlayerRecords", "1");
   if (refreshHistoryMode) params.set("refreshHistory", "1");
   if (refreshDailyStats) params.set("refreshDailyStats", "1");
@@ -2545,7 +2661,16 @@ async function fetchLineups(options = {}) {
 function renderData(data, phase = "ready") {
   latestData = data;
   if (quickGameDate === data.target_date) renderGameQuickNav(quickGames);
+  refreshGameButton.classList.toggle("active", gameStatusView);
   renderGameStrip(data);
+  if (gameStatusView) {
+    teamStats.hidden = true;
+    teamStats.innerHTML = "";
+    teamsRoot.innerHTML = "";
+    setStatus(data, phase);
+    cacheLine.textContent = "경기 상황만 표시 중";
+    return;
+  }
   renderTeamStats(data);
   renderTeams(data);
   setStatus(data, phase);
@@ -2588,6 +2713,13 @@ async function loadData({
   }
 
   try {
+    if (gameStatusView) {
+      const statusData = await fetchLineups({ includeRecords: false });
+      if (token !== loadToken) return;
+      renderData(statusData, phase);
+      return;
+    }
+
     if (progressive) {
       const baseData = await fetchLineups({ includeRecords: false });
       if (token !== loadToken) return;
@@ -2621,13 +2753,16 @@ renderTeamQuickNav();
 syncUrlState();
 controls.addEventListener("submit", (event) => {
   event.preventDefault();
+  gameStatusView = false;
   syncUrlState();
   loadData({ progressive: true });
 });
 teamSelect.addEventListener("change", () => {
+  gameStatusView = false;
   todayView = "";
   selectedGameId = "";
   resetTodayPositionFilter();
+  closeQuickNavOnMobile();
   renderGameQuickNav(quickGames);
   renderTeamQuickNav();
   syncUrlState();
@@ -2637,12 +2772,14 @@ function handleDateChange() {
   todayView = "";
   selectedGameId = "";
   resetTodayPositionFilter();
+  closeQuickNavOnMobile();
   loadGameQuickNav();
   syncUrlState();
   loadData({ progressive: true });
 }
 
 function loadTodayFromRefresh(options = {}) {
+  gameStatusView = false;
   dateInput.value = kstDateString();
   selectedGameId = "";
   renderGameQuickNav(quickGames);
@@ -2652,12 +2789,32 @@ function loadTodayFromRefresh(options = {}) {
   loadData(options);
 }
 
+function loadGameStatusView() {
+  gameStatusView = true;
+  dateInput.value = kstDateString();
+  todayView = "";
+  selectedGameId = "";
+  teamSelect.value = "";
+  resetTodayPositionFilter();
+  renderGameQuickNav(quickGames);
+  renderTeamQuickNav();
+  syncUrlState();
+  closeQuickNavOnMobile();
+  loadGameQuickNav();
+  loadData({ progressive: false, refreshHistoryMode: false });
+}
+
 dateInput.addEventListener("change", handleDateChange);
 prevDateButton.addEventListener("click", () => changeDateBy(-1));
 nextDateButton.addEventListener("click", () => changeDateBy(1));
+quickNavToggle.addEventListener("click", () => {
+  const isOpen = quickNavToggle.getAttribute("aria-expanded") === "true";
+  setQuickNavOpen(!isOpen);
+});
 gameQuickNav.addEventListener("click", (event) => {
   const todayButton = event.target.closest(".today-jump");
   if (todayButton) {
+    gameStatusView = false;
     todayView = validTodayView(todayButton.dataset.todayView);
     selectedGameId = "";
     teamSelect.value = "";
@@ -2665,12 +2822,14 @@ gameQuickNav.addEventListener("click", (event) => {
     renderGameQuickNav(quickGames);
     renderTeamQuickNav();
     syncUrlState();
+    closeQuickNavOnMobile();
     loadData({ progressive: true });
     return;
   }
 
   const button = event.target.closest(".game-jump");
   if (!button) return;
+  gameStatusView = false;
   todayView = "";
   selectedGameId = button.dataset.gameId || "";
   teamSelect.value = "";
@@ -2678,11 +2837,13 @@ gameQuickNav.addEventListener("click", (event) => {
   renderGameQuickNav(quickGames);
   renderTeamQuickNav();
   syncUrlState();
+  closeQuickNavOnMobile();
   loadData({ progressive: true });
 });
 teamQuickNav.addEventListener("click", (event) => {
   const button = event.target.closest(".team-jump");
   if (!button) return;
+  gameStatusView = false;
   todayView = "";
   const value = button.dataset.teamValue || "";
   ensureTeamOption(value, button.dataset.teamLabel || value || "전체");
@@ -2692,9 +2853,10 @@ teamQuickNav.addEventListener("click", (event) => {
   renderGameQuickNav(quickGames);
   renderTeamQuickNav();
   syncUrlState();
+  closeQuickNavOnMobile();
   loadData({ progressive: true });
 });
-refreshGameButton.addEventListener("click", () => loadTodayFromRefresh({ progressive: true }));
+refreshGameButton.addEventListener("click", loadGameStatusView);
 refreshTodayStats.addEventListener("click", () => loadTodayFromRefresh({ progressive: false, refreshDailyStats: true }));
 autoRefresh.addEventListener("change", () => {
   if (latestData) scheduleAutoRefresh(latestData);

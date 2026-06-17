@@ -57,6 +57,7 @@ from kbo_lineups import (  # noqa: E402
 
 SCHEDULE_URL = "https://api-gw.sports.naver.com/schedule/games"
 GAME_RECORD_URL = "https://api-gw.sports.naver.com/schedule/games/{game_id}/record"
+GAME_RELAY_URL = "https://api-gw.sports.naver.com/schedule/games/{game_id}/relay"
 PLAYER_GAME_LOG_URL = "https://api-gw.sports.naver.com/players/kbo/{player_code}/game-log"
 PLAYER_STATS_URL = "https://api-gw.sports.naver.com/statistics/categories/kbo/seasons/{season_year}/players"
 KBO_HITTER_SITUATION_URL = "https://www.koreabaseball.com/Record/Player/HitterBasic/Situation.aspx"
@@ -923,6 +924,180 @@ def fetch_game_record(game_id: str) -> dict[str, Any]:
     if not isinstance(result, dict):
         raise KboLineupError(f"No record data for game {game_id}")
     return result
+
+
+def fetch_game_relay(game_id: str) -> dict[str, Any]:
+    data = request_json(GAME_RELAY_URL.format(game_id=game_id))
+    relay = data.get("result", {}).get("textRelayData")
+    if not isinstance(relay, dict):
+        raise KboLineupError(f"No relay data for game {game_id}")
+    return relay
+
+
+def relay_player_name(relay: dict[str, Any], side: str, player_type: str, player_code: Any) -> str:
+    code = str(player_code or "")
+    if not code:
+        return ""
+    containers = [
+        relay.get(f"{side}Lineup") if isinstance(relay.get(f"{side}Lineup"), dict) else {},
+        relay.get(f"{side}Entry") if isinstance(relay.get(f"{side}Entry"), dict) else {},
+    ]
+    for container in containers:
+        players = container.get(player_type)
+        if not isinstance(players, list):
+            continue
+        for player in players:
+            if not isinstance(player, dict):
+                continue
+            if str(player.get("pcode") or "") == code:
+                return str(player.get("name") or "")
+    return ""
+
+
+def relay_lineup_players(relay: dict[str, Any], side: str, player_type: str) -> list[dict[str, Any]]:
+    lineup = relay.get(f"{side}Lineup") if isinstance(relay.get(f"{side}Lineup"), dict) else {}
+    players = lineup.get(player_type)
+    return [player for player in players if isinstance(player, dict)] if isinstance(players, list) else []
+
+
+def relay_active_batters_by_order(relay: dict[str, Any], side: str) -> dict[int, dict[str, Any]]:
+    active: dict[int, dict[str, Any]] = {}
+    for player in relay_lineup_players(relay, side, "batter"):
+        order = safe_int(player.get("batOrder"), 0)
+        if order < 1 or order > 9 or str(player.get("cout") or "").lower() == "true":
+            continue
+        current = active.get(order)
+        if current is None or safe_int(player.get("seqno"), 0) >= safe_int(current.get("seqno"), 0):
+            active[order] = player
+    return active
+
+
+def relay_batter_sequence(relay: dict[str, Any], side: str, batter_code: Any) -> list[str]:
+    code = str(batter_code or "")
+    if not side or not code:
+        return []
+
+    lineup = relay_lineup_players(relay, side, "batter")
+    current = next((player for player in lineup if str(player.get("pcode") or "") == code), None)
+    if not current:
+        name = relay_player_name(relay, side, "batter", code)
+        return [name] if name else []
+
+    current_order = safe_int(current.get("batOrder"), 0)
+    names = [str(current.get("name") or "")]
+    if current_order < 1 or current_order > 9:
+        return [name for name in names if name]
+
+    active = relay_active_batters_by_order(relay, side)
+    for offset in (1, 2):
+        order = ((current_order - 1 + offset) % 9) + 1
+        player = active.get(order)
+        name = str(player.get("name") or "") if isinstance(player, dict) else ""
+        if name:
+            names.append(name)
+    return [name for name in names if name]
+
+
+def relay_base_label(state: dict[str, Any]) -> str:
+    occupied: list[str] = []
+    for key, label in (("base1", "1"), ("base2", "2"), ("base3", "3")):
+        value = str(state.get(key) or "").strip()
+        if value and value != "0":
+            occupied.append(label)
+    if len(occupied) == 3:
+        return "주자 만루"
+    if occupied:
+        return f"주자 {','.join(occupied)}루"
+    return "주자 없음"
+
+
+def relay_innings_text(value: Any) -> str:
+    if value in (None, "", "-"):
+        return ""
+    text = str(value).strip()
+    match = re.fullmatch(r"(\d+)(?:\.([012]))?", text)
+    if match:
+        whole = safe_int(match.group(1))
+        remainder = safe_int(match.group(2))
+        return f"{whole}.0" if remainder == 0 else f"{whole}.{remainder}"
+
+    outs = innings_to_outs(value)
+    whole, remainder = divmod(outs, 3)
+    return f"{whole}.0" if remainder == 0 else f"{whole}.{remainder}"
+
+
+def relay_pitcher_for_side(relay: dict[str, Any], side: str, current_pitcher_code: Any) -> dict[str, Any] | None:
+    pitchers = relay_lineup_players(relay, side, "pitcher")
+    if not pitchers:
+        return None
+
+    code = str(current_pitcher_code or "")
+    if code:
+        current = next((pitcher for pitcher in pitchers if str(pitcher.get("pcode") or "") == code), None)
+        if current:
+            return current
+
+    return max(pitchers, key=lambda pitcher: safe_int(pitcher.get("seqno")))
+
+
+def relay_pitcher_label(
+    relay: dict[str, Any],
+    side: str,
+    team_name: Any,
+    fallback_name: Any,
+    current_pitcher_code: Any,
+) -> str:
+    pitcher = relay_pitcher_for_side(relay, side, current_pitcher_code)
+    name = str((pitcher or {}).get("name") or fallback_name or "").strip()
+    if pitcher and name:
+        innings = relay_innings_text(pitcher.get("inn")) or "0.0"
+        name = f"{name} {innings} {safe_int(pitcher.get('kk'))}K {safe_int(pitcher.get('bb'))}B"
+    return " ".join(part for part in [str(team_name or ""), name] if part)
+
+
+def relay_batting_side(relay: dict[str, Any], meta: dict[str, Any] | None, game: dict[str, Any]) -> str:
+    home_or_away = str(relay.get("homeOrAway") or "")
+    if home_or_away == "1":
+        return "home"
+    if home_or_away == "0":
+        return "away"
+    status = str((meta or {}).get("statusInfo") or game.get("status") or "")
+    if "말" in status:
+        return "home"
+    if "초" in status:
+        return "away"
+    return ""
+
+
+def live_summary_from_relay(game: dict[str, Any], meta: dict[str, Any] | None, relay: dict[str, Any]) -> dict[str, str]:
+    state = relay.get("currentGameState") if isinstance(relay.get("currentGameState"), dict) else {}
+    batting_side = relay_batting_side(relay, meta, game)
+    inning = str(relay.get("inn") or "").strip()
+    half = "말" if batting_side == "home" else "초" if batting_side == "away" else ""
+    inning_label = f"{inning}회{half}" if inning else str((meta or {}).get("statusInfo") or game.get("status") or "")
+    out_count = state.get("out")
+    out_label = f"{safe_int(out_count)}아웃" if out_count not in (None, "") else ""
+    base_label = relay_base_label(state)
+    batter_names = relay_batter_sequence(relay, batting_side, state.get("batter"))
+    batting_team = str(game.get(f"{batting_side}_team") or "") if batting_side else ""
+
+    away_score = state.get("awayScore", game.get("away_score"))
+    home_score = state.get("homeScore", game.get("home_score"))
+    situation = " ".join(part for part in [inning_label, out_label, base_label] if part)
+    pitchers = [
+        relay_pitcher_label(relay, "away", game.get("away_team"), game.get("away_current_pitcher_name"), state.get("pitcher")),
+        relay_pitcher_label(relay, "home", game.get("home_team"), game.get("home_current_pitcher_name"), state.get("pitcher")),
+    ]
+    return {
+        "score": f"{game.get('away_team') or '-'} {total_score_text(away_score)}-{total_score_text(home_score)} {game.get('home_team') or '-'}",
+        "situation": situation or str((meta or {}).get("statusInfo") or game.get("status") or "-"),
+        "batters": " ".join(part for part in [batting_team, " - ".join(batter_names)] if part),
+        "pitcher": " / ".join(part for part in pitchers if part.strip()),
+    }
+
+
+def total_score_text(value: Any) -> str:
+    return "-" if value in (None, "") else str(value)
 
 
 def game_matches_query(game: Any, query: str | None) -> bool:
@@ -2887,6 +3062,7 @@ def scoreboard_from_record(
             "r": side_totals.get("r", (meta or {}).get(score_key)),
             "h": side_totals.get("h"),
             "e": side_totals.get("e"),
+            "b": side_totals.get("b"),
         }
 
     return {
@@ -2926,6 +3102,7 @@ def enrich_live_context(
         if isinstance(team, dict)
     }
     game_record_cache: dict[str, dict[str, Any] | None] = {}
+    game_relay_cache: dict[str, dict[str, Any] | None] = {}
     player_cache: dict[str, dict[str, Any]] = {}
     vs_cache: dict[tuple[str, str], dict[str, Any]] = {}
     history_cache = load_history_cache(DEFAULT_HISTORY_CACHE) if include_player_records else None
@@ -2947,6 +3124,17 @@ def enrich_live_context(
             game["home_score"] = meta.get("homeTeamScore")
             game["away_current_pitcher_name"] = meta.get("awayCurrentPitcherName")
             game["home_current_pitcher_name"] = meta.get("homeCurrentPitcherName")
+
+        if is_live_game(meta):
+            if game_id not in game_relay_cache:
+                try:
+                    game_relay_cache[game_id] = fetch_game_relay(game_id)
+                except KboLineupError as exc:
+                    game_relay_cache[game_id] = None
+                    game["live_summary_error"] = str(exc)
+            relay = game_relay_cache.get(game_id)
+            if relay:
+                game["live_summary"] = live_summary_from_relay(game, meta, relay)
 
         if is_cancelled_game(game, meta):
             game["canceled"] = True

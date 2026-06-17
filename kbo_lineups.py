@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import unicodedata
@@ -473,6 +474,9 @@ def innings_to_outs(value: Any) -> int:
         whole = intish(whole_text)
     else:
         whole, fraction_text = 0, text
+        dotted = re.fullmatch(r"(\d+)\.([012])", text)
+        if dotted:
+            return intish(dotted.group(1)) * 3 + intish(dotted.group(2))
         if "/" not in text:
             return intish(text) * 3
 
@@ -486,8 +490,14 @@ def innings_to_outs(value: Any) -> int:
 def outs_to_innings(outs: int) -> str:
     whole, remainder = divmod(outs, 3)
     if remainder == 0:
-        return str(whole)
-    return f"{whole} {remainder}/3"
+        return f"{whole}.0"
+    return f"{whole}.{remainder}"
+
+
+def format_innings(value: Any) -> str:
+    if value in (None, "", "-"):
+        return "-"
+    return outs_to_innings(innings_to_outs(value))
 
 
 def summarize_recent_games(games: list[dict[str, Any]], player_type: str) -> dict[str, Any]:
@@ -1263,7 +1273,7 @@ def format_recent_cell(player: dict[str, Any]) -> str:
 
     if player_type == "pitcher":
         return (
-            f"{summary.get('games', 0)}G {summary.get('innings', '0')}IP "
+            f"{summary.get('games', 0)}G {format_innings(summary.get('innings', '0'))}IP "
             f"ERA {format_decimal(summary.get('era'))} "
             f"WHIP {format_decimal(summary.get('whip'))} "
             f"{summary.get('kk', 0)}K"
@@ -1297,7 +1307,7 @@ def format_vs_team_cell(player: dict[str, Any], include_opponent: bool = True) -
             return f"vs {opponent_name}: 올해 전적 없음" if include_opponent else "올해 전적 없음"
         return (
             f"{prefix}ERA {format_decimal(stats.get('era'))} "
-            f"{stats.get('inn', '-')}IP {intish(stats.get('w'))}-{intish(stats.get('l'))} "
+            f"{format_innings(stats.get('inn'))}IP {intish(stats.get('w'))}-{intish(stats.get('l'))} "
             f"{stats.get('kk', 0)}K WHIP {format_decimal(stats.get('whip'))}"
         )
 
@@ -1328,7 +1338,7 @@ def format_season_cell(player: dict[str, Any]) -> str:
         if player_type == "pitcher":
             chunks.append(
                 f"{short_year(label)} ERA {format_decimal(year.get('era'))} "
-                f"{year.get('inn', '-')}IP {year.get('w', 0)}-{year.get('l', 0)} "
+                f"{format_innings(year.get('inn'))}IP {year.get('w', 0)}-{year.get('l', 0)} "
                 f"{year.get('kk', 0)}K"
             )
         else:
