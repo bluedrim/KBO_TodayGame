@@ -62,7 +62,7 @@ PLAYER_GAME_LOG_URL = "https://api-gw.sports.naver.com/players/kbo/{player_code}
 PLAYER_STATS_URL = "https://api-gw.sports.naver.com/statistics/categories/kbo/seasons/{season_year}/players"
 KBO_HITTER_SITUATION_URL = "https://www.koreabaseball.com/Record/Player/HitterBasic/Situation.aspx"
 PLAYER_STATS_PAGE_SIZE = 100
-LIVE_STATUS_CODES = {"STARTED", "2"}
+LIVE_STATUS_CODES = {"STARTED", "ENDED", "2", "3"}
 RESULT_STATUS_CODES = {"RESULT", "4"}
 CANCEL_STATUS_CODES = {"CANCEL", "CANCELED", "CANCELLED"}
 TEAM_OVERVIEW_QUERY = "__teams__"
@@ -2002,7 +2002,7 @@ def attach_pitcher_appearance_logs(
 def is_live_game(meta: dict[str, Any] | None) -> bool:
     if not meta:
         return False
-    return str(meta.get("statusCode") or "").upper() in LIVE_STATUS_CODES or str(meta.get("statusNum") or "") == "2"
+    return str(meta.get("statusCode") or "").upper() in LIVE_STATUS_CODES or str(meta.get("statusNum") or "") in LIVE_STATUS_CODES
 
 
 def is_result_game(meta: dict[str, Any] | None) -> bool:
