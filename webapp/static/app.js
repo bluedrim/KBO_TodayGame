@@ -77,7 +77,7 @@ function changeDateBy(days) {
 }
 
 function validRosterView(value) {
-  return ["all", "hitters", "pitchers"].includes(value) ? value : "all";
+  return ["all", "hitters", "pitchers", "first"].includes(value) ? value : "all";
 }
 
 function validTodayView(value) {
@@ -886,6 +886,81 @@ function sortedRosterPitchers(players, currentYear) {
       || compareNumbers(inningsSortValue(aStats.innings ?? aStats.inn), inningsSortValue(bStats.innings ?? bStats.inn), "desc")
       || playerNameCompare(a, b)
     );
+  });
+}
+
+function firstTeamPlayerKeys(team) {
+  const roster = team?.registered_roster || {};
+  const codes = Array.isArray(roster.player_codes) ? roster.player_codes : [];
+  const hitterCodes = Array.isArray(roster.hitter_codes) ? roster.hitter_codes : [];
+  const pitcherCodes = Array.isArray(roster.pitcher_codes) ? roster.pitcher_codes : [];
+  const players = Array.isArray(roster.players) ? roster.players : [];
+  const hitterNames = players
+    .filter((player) => player?.player_role !== "pitcher")
+    .map((player) => player?.name)
+    .filter(Boolean);
+  const pitcherNames = players
+    .filter((player) => player?.player_role === "pitcher")
+    .map((player) => player?.name)
+    .filter(Boolean);
+  return {
+    codes: new Set(codes.map((code) => String(code || "").trim()).filter(Boolean)),
+    hitterCodes: new Set(hitterCodes.map((code) => String(code || "").trim()).filter(Boolean)),
+    pitcherCodes: new Set(pitcherCodes.map((code) => String(code || "").trim()).filter(Boolean)),
+    hitterNames: new Set(hitterNames.map(normalizeKey).filter(Boolean)),
+    pitcherNames: new Set(pitcherNames.map(normalizeKey).filter(Boolean)),
+  };
+}
+
+function isFirstTeamPlayer(player, keys, role) {
+  const code = String(player?.player_code || player?.pcode || "").trim();
+  const roleCodes = role === "pitcher" ? keys.pitcherCodes : keys.hitterCodes;
+  const roleNames = role === "pitcher" ? keys.pitcherNames : keys.hitterNames;
+  if (code && roleCodes.has(code)) return true;
+  if (!roleCodes.size && code && keys.codes.has(code)) return true;
+  const nameKey = normalizeKey(player?.name);
+  return Boolean(nameKey && roleNames.has(nameKey));
+}
+
+function firstTeamPlayers(players, keys, role) {
+  return players.filter((player) => isFirstTeamPlayer(player, keys, role));
+}
+
+function firstTeamRosterPlayers(team, seasonPlayers, role) {
+  const roster = team?.registered_roster || {};
+  const registeredPlayers = Array.isArray(roster.players) ? roster.players : [];
+  const selected = registeredPlayers.filter((player) => {
+    const playerRole = player?.player_role === "pitcher" ? "pitcher" : "hitter";
+    return playerRole === role;
+  });
+  if (!selected.length) {
+    return firstTeamPlayers(seasonPlayers, firstTeamPlayerKeys(team), role);
+  }
+
+  const byCode = new Map();
+  const byName = new Map();
+  seasonPlayers.forEach((player) => {
+    const code = String(player?.player_code || player?.pcode || "").trim();
+    if (code) byCode.set(code, player);
+    const nameKey = normalizeKey(player?.name);
+    if (nameKey) byName.set(nameKey, player);
+  });
+
+  return selected.map((registered, index) => {
+    const code = String(registered?.player_code || "").trim();
+    const existing = (code && byCode.get(code)) || byName.get(normalizeKey(registered?.name));
+    if (existing) {
+      return {
+        ...registered,
+        ...existing,
+        player_role: role,
+      };
+    }
+    return {
+      ...registered,
+      player_role: role,
+      bat_order: index + 1,
+    };
   });
 }
 
@@ -2101,6 +2176,7 @@ function renderRosterPitcherRow(player, yearColumns, displayOrder) {
 
 function renderRosterViewTabs() {
   const options = [
+    ["first", "1군"],
     ["all", "전체"],
     ["hitters", "타자"],
     ["pitchers", "투수"],
@@ -2271,15 +2347,19 @@ function renderRosterTeamPanel(team, data) {
   const stats = team.team_season || {};
   const hitters = Array.isArray(team.batting_order) ? team.batting_order : [];
   const pitchers = Array.isArray(team.pitching_staff) ? team.pitching_staff : [];
+  const visibleHitters = rosterView === "first" ? firstTeamRosterPlayers(team, hitters, "hitter") : hitters;
+  const visiblePitchers = rosterView === "first" ? firstTeamRosterPlayers(team, pitchers, "pitcher") : pitchers;
+  const firstTeamError = rosterView === "first" ? team.registered_roster?.error : "";
   const yearColumns = historyYears(data);
   const currentYear = Number(data.season_year || String(data.target_date || "").slice(0, 4));
   const showHitters = rosterView !== "pitchers";
   const showPitchers = rosterView !== "hitters";
-  const sortedHitters = sortedRosterHitters(hitters, currentYear);
-  const sortedPitchers = sortedRosterPitchers(pitchers, currentYear);
+  const sortedHitters = sortedRosterHitters(visibleHitters, currentYear);
+  const sortedPitchers = sortedRosterPitchers(visiblePitchers, currentYear);
   const counts = team.roster_counts || { hitters: hitters.length, pitchers: pitchers.length };
   const hitterColspan = 2 + 5 + (yearColumns.length * 6);
   const pitcherColspan = 2 + 7 + (yearColumns.length * 11);
+  const tableLabel = rosterView === "first" ? "1군 등록" : "엔트리";
 
   return `
     <article class="team-panel roster-panel selected">
@@ -2293,8 +2373,9 @@ function renderRosterTeamPanel(team, data) {
         </div>
         <div class="record-line">
           <span class="chip">${escapeHtml(teamOverall(stats))}</span>
-          <span class="chip">타자 ${escapeHtml(counts.hitters ?? hitters.length)}명</span>
-          <span class="chip">투수 ${escapeHtml(counts.pitchers ?? pitchers.length)}명</span>
+          <span class="chip">타자 ${escapeHtml(visibleHitters.length)}명</span>
+          <span class="chip">투수 ${escapeHtml(visiblePitchers.length)}명</span>
+          ${rosterView === "first" ? `<span class="chip">1군 ${escapeHtml(counts.first_team ?? (visibleHitters.length + visiblePitchers.length))}명</span>` : ""}
         </div>
       </div>
 
@@ -2315,7 +2396,7 @@ function renderRosterTeamPanel(team, data) {
       ` : ""}
 
       <section class="team-section section-recent"${showHitters ? "" : " hidden"}>
-        <div class="table-title">타자 엔트리 · AVG 순 · 최근10G / 최근 3년 성적</div>
+        <div class="table-title">타자 ${escapeHtml(tableLabel)} · AVG 순 · 최근10G / 최근 3년 성적${firstTeamError ? ` · ${escapeHtml(firstTeamError)}` : ""}</div>
         <div class="table-scroll">
           <table class="lineup-table recent-season-table roster-table roster-hitter-table">
             <thead>
@@ -2349,7 +2430,7 @@ function renderRosterTeamPanel(team, data) {
       </section>
 
       <section class="team-section section-matchup"${showPitchers ? "" : " hidden"}>
-        <div class="table-title">투수 엔트리 · ERA 순 · 최근10G / 최근 3년 성적</div>
+        <div class="table-title">투수 ${escapeHtml(tableLabel)} · ERA 순 · 최근10G / 최근 3년 성적${firstTeamError ? ` · ${escapeHtml(firstTeamError)}` : ""}</div>
         <div class="table-scroll">
           <table class="lineup-table pitcher-roster-table roster-table">
             <thead>

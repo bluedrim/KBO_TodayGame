@@ -60,6 +60,7 @@ GAME_RECORD_URL = "https://api-gw.sports.naver.com/schedule/games/{game_id}/reco
 GAME_RELAY_URL = "https://api-gw.sports.naver.com/schedule/games/{game_id}/relay"
 PLAYER_GAME_LOG_URL = "https://api-gw.sports.naver.com/players/kbo/{player_code}/game-log"
 PLAYER_STATS_URL = "https://api-gw.sports.naver.com/statistics/categories/kbo/seasons/{season_year}/players"
+KBO_REGISTER_URL = "https://www.koreabaseball.com/Player/Register.aspx"
 KBO_HITTER_SITUATION_URL = "https://www.koreabaseball.com/Record/Player/HitterBasic/Situation.aspx"
 PLAYER_STATS_PAGE_SIZE = 100
 LIVE_STATUS_CODES = {"STARTED", "ENDED", "2", "3"}
@@ -173,11 +174,98 @@ def count_cache_event(cache: DailyStatsCache | None, key: str) -> None:
     cache.stats[key] = cache.stats.get(key, 0) + 1
 
 
+def cache_date_digits(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    match = re.search(r"\d{4}-\d{2}-\d{2}", text)
+    if match:
+        return match.group(0).replace("-", "")
+    match = re.search(r"\d{8}", text)
+    return match.group(0) if match else ""
+
+
+def player_games_latest_date(games: Any) -> str:
+    if not isinstance(games, list):
+        return ""
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        for key in ("gday", "gameDate", "date", "day"):
+            date = cache_date_digits(game.get(key))
+            if date:
+                return date
+    return ""
+
+
+def cached_player_data_is_stale_for_target(
+    cache: DailyStatsCache | None,
+    record: dict[str, Any],
+    player_type: str,
+) -> bool:
+    if not cache or player_type != "hitter":
+        return False
+    target_date = cache_date_digits(cache.target_date)
+    today = cache_date_digits(kst_today())
+    if not target_date or not today or target_date >= today:
+        return False
+
+    if "recent_10_games" in record:
+        recent = record.get("recent_10_games") if isinstance(record.get("recent_10_games"), dict) else {}
+        games = recent.get("games") if isinstance(recent, dict) else []
+        updated_at = recent.get("updated_at") if isinstance(recent, dict) else record.get("updated_at")
+    else:
+        games = record.get("games")
+        updated_at = record.get("updated_at")
+
+    latest_game_date = player_games_latest_date(games)
+    updated_date = cache_date_digits(updated_at)
+    return bool(
+        latest_game_date
+        and latest_game_date < target_date
+        and (not updated_date or updated_date <= target_date)
+    )
+
+
+def cached_schedule_meta_is_stale_for_target(
+    cache: DailyStatsCache | None,
+    record: dict[str, Any],
+    target_date: str,
+) -> bool:
+    if not cache:
+        return False
+    target = cache_date_digits(target_date)
+    today = cache_date_digits(kst_today())
+    if not target or not today or target >= today:
+        return False
+
+    # Past games should eventually resolve to RESULT or CANCEL. If an earlier
+    # full load saved READY/LIVE state before the final record was available,
+    # refresh it instead of keeping the old schedule snapshot all day.
+    for raw in record.values():
+        if not isinstance(raw, dict):
+            continue
+        status_code = str(raw.get("statusCode") or "").upper()
+        status_num = str(raw.get("statusNum") or "")
+        status_info = str(raw.get("statusInfo") or "")
+        if status_code in {"RESULT", "CANCEL", "CANCELED", "POSTPONED"} or status_num == "4":
+            continue
+        if any(text in status_info for text in ("취소", "연기", "중지")):
+            continue
+        return True
+    return False
+
+
 def cached_player_record(cache: DailyStatsCache | None, player_code: str) -> dict[str, Any] | None:
     if not cache:
         return None
     record = cache.day.get("player_records", {}).get(player_code)
     if isinstance(record, dict):
+        if cached_player_data_is_stale_for_target(cache, record, str(record.get("player_type") or "")):
+            cache.day.setdefault("player_records", {}).pop(player_code, None)
+            cache.dirty = True
+            count_cache_event(cache, "player_record_stale")
+            return None
         count_cache_event(cache, "player_record_hits")
         return record
     return None
@@ -237,6 +325,11 @@ def cached_player_game_log(
         return None
     record = cache.day.get("player_game_logs", {}).get(player_game_log_cache_key(player_code, player_type))
     if isinstance(record, dict):
+        if cached_player_data_is_stale_for_target(cache, record, player_type):
+            cache.day.setdefault("player_game_logs", {}).pop(player_game_log_cache_key(player_code, player_type), None)
+            cache.dirty = True
+            count_cache_event(cache, "player_game_log_stale")
+            return None
         count_cache_event(cache, "player_game_log_hits")
         return record
     return None
@@ -260,6 +353,11 @@ def cached_schedule_meta(cache: DailyStatsCache | None, target_date: str) -> dic
         return None
     record = cache.day.get("schedule_meta", {}).get(target_date)
     if isinstance(record, dict):
+        if cached_schedule_meta_is_stale_for_target(cache, record, target_date):
+            cache.day.setdefault("schedule_meta", {}).pop(target_date, None)
+            cache.dirty = True
+            count_cache_event(cache, "schedule_meta_stale")
+            return None
         count_cache_event(cache, "schedule_meta_hits")
         return record
     return None
@@ -270,6 +368,48 @@ def store_schedule_meta(cache: DailyStatsCache | None, target_date: str, record:
         return
     cache.day.setdefault("schedule_meta", {})[target_date] = record
     count_cache_event(cache, "schedule_meta_fetches")
+    cache.dirty = True
+
+
+def kbo_registered_roster_cache_key(target_date: str, team_code: str) -> str:
+    return f"{target_date}:{team_code}"
+
+
+def cached_kbo_registered_roster(
+    cache: DailyStatsCache | None,
+    target_date: str,
+    team_code: str,
+) -> dict[str, Any] | None:
+    if not cache:
+        return None
+    record = cache.day.get("kbo_registered_rosters", {}).get(
+        kbo_registered_roster_cache_key(target_date, team_code)
+    )
+    if isinstance(record, dict):
+        if not record.get("error") and not record.get("players"):
+            cache.day.setdefault("kbo_registered_rosters", {}).pop(
+                kbo_registered_roster_cache_key(target_date, team_code),
+                None,
+            )
+            cache.dirty = True
+            return None
+        count_cache_event(cache, "kbo_registered_roster_hits")
+        return record
+    return None
+
+
+def store_kbo_registered_roster(
+    cache: DailyStatsCache | None,
+    target_date: str,
+    team_code: str,
+    record: dict[str, Any],
+) -> None:
+    if not cache:
+        return
+    cache.day.setdefault("kbo_registered_rosters", {})[
+        kbo_registered_roster_cache_key(target_date, team_code)
+    ] = record
+    count_cache_event(cache, "kbo_registered_roster_fetches")
     cache.dirty = True
 
 
@@ -369,6 +509,9 @@ def cache_status(
     vs_records = day.get("vs_player_stats") if isinstance(day.get("vs_player_stats"), dict) else {}
     game_logs = day.get("player_game_logs") if isinstance(day.get("player_game_logs"), dict) else {}
     schedule_meta = day.get("schedule_meta") if isinstance(day.get("schedule_meta"), dict) else {}
+    registered_rosters = (
+        day.get("kbo_registered_rosters") if isinstance(day.get("kbo_registered_rosters"), dict) else {}
+    )
     kbo_situation = day.get("kbo_hitter_situation") if isinstance(day.get("kbo_hitter_situation"), dict) else {}
     team_opponent_records = (
         day.get("team_opponent_records") if isinstance(day.get("team_opponent_records"), dict) else {}
@@ -376,12 +519,17 @@ def cache_status(
     stats = {
         "player_record_hits": cache.stats.get("player_record_hits", 0),
         "player_record_fetches": cache.stats.get("player_record_fetches", 0),
+        "player_record_stale": cache.stats.get("player_record_stale", 0),
         "vs_player_stats_hits": cache.stats.get("vs_player_stats_hits", 0),
         "vs_player_stats_fetches": cache.stats.get("vs_player_stats_fetches", 0),
         "player_game_log_hits": cache.stats.get("player_game_log_hits", 0),
         "player_game_log_fetches": cache.stats.get("player_game_log_fetches", 0),
+        "player_game_log_stale": cache.stats.get("player_game_log_stale", 0),
         "schedule_meta_hits": cache.stats.get("schedule_meta_hits", 0),
         "schedule_meta_fetches": cache.stats.get("schedule_meta_fetches", 0),
+        "schedule_meta_stale": cache.stats.get("schedule_meta_stale", 0),
+        "kbo_registered_roster_hits": cache.stats.get("kbo_registered_roster_hits", 0),
+        "kbo_registered_roster_fetches": cache.stats.get("kbo_registered_roster_fetches", 0),
         "kbo_hitter_situation_hits": cache.stats.get("kbo_hitter_situation_hits", 0),
         "kbo_hitter_situation_fetches": cache.stats.get("kbo_hitter_situation_fetches", 0),
         "team_opponent_record_hits": cache.stats.get("team_opponent_record_hits", 0),
@@ -392,6 +540,7 @@ def cache_status(
         + stats["vs_player_stats_fetches"]
         + stats["player_game_log_fetches"]
         + stats["schedule_meta_fetches"]
+        + stats["kbo_registered_roster_fetches"]
         + stats["kbo_hitter_situation_fetches"]
         + stats["team_opponent_record_fetches"]
     )
@@ -400,13 +549,17 @@ def cache_status(
         + stats["vs_player_stats_hits"]
         + stats["player_game_log_hits"]
         + stats["schedule_meta_hits"]
+        + stats["kbo_registered_roster_hits"]
         + stats["kbo_hitter_situation_hits"]
         + stats["team_opponent_record_hits"]
     )
+    stale = stats["player_record_stale"] + stats["player_game_log_stale"] + stats["schedule_meta_stale"]
     if refresh_history:
         message = "3년 기록 갱신으로 성적을 새로 조회했습니다"
     elif refresh_daily_stats:
         message = f"오늘 성적 강제 갱신으로 {fetched}건 새로 조회"
+    elif stale and fetched:
+        message = f"오래된 캐시 {stale}건 갱신, 변경/신규 {fetched}건 조회"
     elif fetched and hits:
         message = f"캐시 {hits}건 사용, 변경/신규 {fetched}건 조회"
     elif fetched:
@@ -425,6 +578,7 @@ def cache_status(
         "stored_vs_player_stats": len(vs_records),
         "stored_player_game_logs": len(game_logs),
         "stored_schedule_meta": len(schedule_meta),
+        "stored_kbo_registered_rosters": len(registered_rosters),
         "stored_kbo_hitter_situation": len(kbo_situation),
         "stored_team_opponent_records": len(team_opponent_records),
         "stats": stats,
@@ -770,6 +924,152 @@ def post_kbo_hitter_situation(
     with opener.open(request, timeout=15) as response:
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, "replace")
+
+
+def post_kbo_register_page(
+    opener: Any,
+    page: str,
+    team_code: str,
+    target_date: str,
+) -> str:
+    fields = {
+        "__EVENTTARGET": f"{KBO_FORM_PREFIX}btnCalendarSelect",
+        "__EVENTARGUMENT": "",
+        "__LASTFOCUS": "",
+        **kbo_form_values(page),
+        f"{KBO_FORM_PREFIX}hfSearchTeam": team_code,
+        f"{KBO_FORM_PREFIX}hfSearchDate": target_date.replace("-", ""),
+    }
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": KBO_REGISTER_URL,
+        "User-Agent": "Mozilla/5.0 (compatible; KBO-Lineup-Fetcher/1.0)",
+    }
+    request = Request(KBO_REGISTER_URL, data=urlencode(fields).encode(), headers=headers)
+    with opener.open(request, timeout=15) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        return response.read().decode(charset, "replace")
+
+
+def parse_kbo_registered_roster(page: str) -> dict[str, Any]:
+    roster_start = page.find("선수등록명단")
+    roster_end = page.find("등/말소 현황", roster_start if roster_start >= 0 else 0)
+    roster_page = page[roster_start:roster_end] if roster_start >= 0 and roster_end > roster_start else page
+    players: list[dict[str, Any]] = []
+    hitter_codes: list[str] = []
+    pitcher_codes: list[str] = []
+
+    for table_row in re.findall(r"<tr[^>]*>[\s\S]*?</tr>", roster_page):
+        if "/Record/Player/" not in table_row or "playerId=" not in table_row:
+            continue
+        player_id_match = re.search(r"playerId=(\d+)", table_row)
+        name_match = re.search(r"playerId=\d+[^>]*>([^<]+)</a>", table_row)
+        if not player_id_match or not name_match:
+            continue
+        cells = [
+            strip_html_text(cell)
+            for cell in re.findall(r"<td[^>]*>([\s\S]*?)</td>", table_row)
+        ]
+        role = "pitcher" if "PitcherDetail" in table_row else "hitter"
+        player_code = player_id_match.group(1)
+        player = {
+            "player_code": player_code,
+            "name": html.unescape(name_match.group(1)).strip(),
+            "player_role": role,
+            "back_number": cells[0] if len(cells) > 0 else "",
+            "position": cells[2] if len(cells) > 2 else "",
+            "bats_throws": cells[3] if len(cells) > 3 else "",
+        }
+        players.append({key: value for key, value in player.items() if value not in ("", None)})
+        if role == "pitcher":
+            pitcher_codes.append(player_code)
+        else:
+            hitter_codes.append(player_code)
+
+    register_date = html_value(page, f"{KBO_FORM_PREFIX}hfSearchDate")
+    team_code = html_value(page, f"{KBO_FORM_PREFIX}hfSearchTeam")
+    title_match = re.search(r"<h4[^>]*class=\"bul_history\"[^>]*>([\s\S]*?선수등록명단)</h4>", page)
+    return {
+        "team_code": team_code,
+        "register_date": register_date,
+        "title": strip_html_text(title_match.group(1)) if title_match else "",
+        "players": players,
+        "player_codes": [player["player_code"] for player in players if player.get("player_code")],
+        "hitter_codes": hitter_codes,
+        "pitcher_codes": pitcher_codes,
+        "counts": {
+            "all": len(players),
+            "hitters": len(hitter_codes),
+            "pitchers": len(pitcher_codes),
+        },
+        "source_name": "KBO 선수 등록 현황",
+        "source_url": KBO_REGISTER_URL,
+        "updated_at": now_kst_iso(),
+    }
+
+
+def fetch_kbo_registered_roster(team_code: str, target_date: str) -> dict[str, Any]:
+    jar = http.cookiejar.CookieJar()
+    opener = build_opener(HTTPCookieProcessor(jar))
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+        "Referer": "https://www.koreabaseball.com/",
+        "User-Agent": "Mozilla/5.0 (compatible; KBO-Lineup-Fetcher/1.0)",
+    }
+    try:
+        with opener.open(Request(KBO_REGISTER_URL, headers=headers), timeout=15) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            page = response.read().decode(charset, "replace")
+        latest_date = html_value(page, f"{KBO_FORM_PREFIX}hfSearchDate")
+        page = post_kbo_register_page(opener, page, team_code, target_date)
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        raise KboLineupError(f"KBO 1군 등록선수 조회 실패: {exc}") from exc
+
+    parsed = parse_kbo_registered_roster(page)
+    if not parsed.get("players") and latest_date and latest_date != target_date.replace("-", ""):
+        try:
+            fallback_page = post_kbo_register_page(opener, page, team_code, latest_date)
+            fallback = parse_kbo_registered_roster(fallback_page)
+            if fallback.get("players"):
+                fallback["requested_date"] = target_date.replace("-", "")
+                fallback["date_fallback"] = True
+                return fallback
+        except (HTTPError, URLError, TimeoutError, OSError):
+            pass
+    return parsed
+
+
+def get_kbo_registered_roster(
+    target_date: str,
+    team_code: str,
+    daily_cache: DailyStatsCache | None,
+    use_daily_cache: bool,
+) -> dict[str, Any]:
+    if use_daily_cache:
+        cached = cached_kbo_registered_roster(daily_cache, target_date, team_code)
+        if cached is not None:
+            return cached
+    try:
+        record = fetch_kbo_registered_roster(team_code, target_date)
+    except KboLineupError as exc:
+        record = {
+            "team_code": team_code,
+            "register_date": target_date.replace("-", ""),
+            "players": [],
+            "player_codes": [],
+            "hitter_codes": [],
+            "pitcher_codes": [],
+            "counts": {"all": 0, "hitters": 0, "pitchers": 0},
+            "error": str(exc),
+            "source_name": "KBO 선수 등록 현황",
+            "source_url": KBO_REGISTER_URL,
+            "updated_at": now_kst_iso(),
+        }
+    store_kbo_registered_roster(daily_cache, target_date, team_code, record)
+    return record
 
 
 def parse_kbo_rate(value: Any) -> float | None:
@@ -1621,6 +1921,13 @@ def collect_team_roster(
 
     hitters = [compact_roster_hitter(raw, index + 1, season_year) for index, raw in enumerate(hitter_rows)]
     pitchers = [compact_roster_pitcher(raw, index + 1, season_year) for index, raw in enumerate(pitcher_rows)]
+    register_team_code = KBO_TEAM_CODE_ALIASES.get(normalize_team_key(team_code), team_code)
+    registered_roster = get_kbo_registered_roster(
+        target_date,
+        register_team_code,
+        daily_cache,
+        use_daily_cache,
+    )
 
     team = {
         "team_code": team_code,
@@ -1639,10 +1946,14 @@ def collect_team_roster(
         ),
         "batting_order": hitters,
         "pitching_staff": pitchers,
+        "registered_roster": registered_roster,
         "roster_mode": True,
         "roster_counts": {
             "hitters": len(hitters),
             "pitchers": len(pitchers),
+            "first_team": (registered_roster.get("counts") or {}).get("all", 0)
+            if isinstance(registered_roster, dict)
+            else 0,
         },
     }
 
@@ -3292,6 +3603,14 @@ def enrich_live_context(
 class KboWebHandler(BaseHTTPRequestHandler):
     server_version = "KBOAnalyzer/1.0"
 
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/lineups":
@@ -3411,6 +3730,7 @@ class KboWebHandler(BaseHTTPRequestHandler):
         encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()

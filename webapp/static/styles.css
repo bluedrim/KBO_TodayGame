@@ -911,6 +911,15 @@ tr:last-child td {
   min-width: 62px;
 }
 
+.opponent-record-table td:not(:first-child),
+.opponent-record-table th:not(:first-child) {
+  text-align: right;
+}
+
+.opponent-record-table thead .sub-head th:first-child {
+  text-align: right;
+}
+
 .team-context-table .number-stat {
   min-width: 34px;
 }
@@ -1231,6 +1240,15 @@ th.num {
   max-width: 120px;
 }
 
+.roster-hitter-table th:nth-child(2),
+.roster-hitter-table td.player,
+.pitcher-roster-table th:nth-child(2),
+.pitcher-roster-table td.player {
+  width: 120px;
+  min-width: 120px;
+  max-width: 120px;
+}
+
 .roster-hitter-table {
   min-width: 1350px;
 }
@@ -1269,7 +1287,7 @@ th.num {
 }
 
 .pitcher-roster-table {
-  min-width: 1980px;
+  min-width: 1920px;
 }
 
 .pitcher-roster-table .stat-games,
@@ -1294,6 +1312,34 @@ th.num {
   max-width: 42px;
   padding-left: 4px;
   padding-right: 4px;
+}
+
+.pitcher-roster-table thead .sub-head th:nth-child(1),
+.pitcher-roster-table tbody td:nth-child(3),
+.pitcher-roster-table thead .sub-head th:nth-child(5),
+.pitcher-roster-table tbody td:nth-child(7),
+.pitcher-roster-table thead .sub-head th:nth-child(6),
+.pitcher-roster-table tbody td:nth-child(8) {
+  width: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  padding-left: 3px;
+  padding-right: 3px;
+}
+
+.pitcher-roster-table thead .sub-head th:nth-child(2),
+.pitcher-roster-table tbody td:nth-child(4),
+.pitcher-roster-table thead .sub-head th:nth-child(3),
+.pitcher-roster-table tbody td:nth-child(5),
+.pitcher-roster-table thead .sub-head th:nth-child(4),
+.pitcher-roster-table tbody td:nth-child(6),
+.pitcher-roster-table thead .sub-head th:nth-child(7),
+.pitcher-roster-table tbody td:nth-child(9) {
+  width: 34px;
+  min-width: 34px;
+  max-width: 34px;
+  padding-left: 3px;
+  padding-right: 3px;
 }
 
 .today-lineup-table {
