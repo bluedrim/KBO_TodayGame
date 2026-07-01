@@ -501,6 +501,24 @@ button:disabled {
   white-space: normal;
 }
 
+.warning-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.warning-pill {
+  min-height: 19px;
+  padding: 2px 6px;
+  border: 1px solid #f1c7a6;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #945b16;
+  font-size: 10px;
+  font-weight: 900;
+}
+
 .scoreboard {
   margin-top: 7px;
   overflow-x: auto;
@@ -743,6 +761,10 @@ tr:last-child td {
   margin-top: 12px;
 }
 
+.team-grid[data-aggregate-game="true"] {
+  gap: 8px;
+}
+
 .team-panel {
   min-width: 0;
   overflow: hidden;
@@ -758,6 +780,24 @@ tr:last-child td {
 
 .team-panel.roster-panel {
   grid-column: 1 / -1;
+}
+
+.team-grid[data-aggregate-game="true"] .team-head {
+  padding-top: 6px;
+  padding-bottom: 5px;
+}
+
+.team-grid[data-aggregate-game="true"] .metric-grid {
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.25fr) minmax(0, 1.25fr) minmax(64px, 0.55fr);
+  gap: 1px;
+}
+
+.team-grid[data-aggregate-game="true"] .metric {
+  padding: 6px 7px;
+}
+
+.team-grid[data-aggregate-game="true"] .pitcher-stack {
+  border-top: 1px solid var(--line);
 }
 
 .team-panel.today-panel {
@@ -829,7 +869,7 @@ tr:last-child td {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.25fr) minmax(0, 1.25fr) minmax(70px, 0.55fr);
   gap: 1px;
   background: var(--line);
   border-bottom: 1px solid var(--line);
@@ -905,6 +945,10 @@ tr:last-child td {
   text-align: right;
 }
 
+.team-context-table:not(.opponent-record-table) td:first-child {
+  text-align: center;
+}
+
 .opponent-record-table td:first-child,
 .opponent-record-table th:first-child {
   width: 62px;
@@ -918,6 +962,10 @@ tr:last-child td {
 
 .opponent-record-table thead .sub-head th:first-child {
   text-align: right;
+}
+
+.opponent-record-table th.group-head {
+  text-align: left;
 }
 
 .team-context-table .number-stat {
@@ -966,6 +1014,16 @@ tr:last-child td {
   background: #fffdf8;
 }
 
+.pitcher-line-spacer {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.table-spacer-row {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .pitcher-name {
   font-weight: 900;
   overflow: hidden;
@@ -1002,6 +1060,24 @@ tr:last-child td {
 
 .table-scroll {
   overflow-x: auto;
+}
+
+.pitcher-hand-table {
+  min-width: 420px;
+}
+
+.pitcher-hand-table .player {
+  width: 104px;
+  min-width: 104px;
+  max-width: 104px;
+}
+
+.pitcher-hand-table th.stat-focus {
+  text-align: right;
+}
+
+.current-pitcher-row td {
+  background: #fffdf8;
 }
 
 .mobile-section-tabs {
@@ -1249,7 +1325,16 @@ th.num {
   max-width: 120px;
 }
 
+.roster-hitter-table th.group-head,
+.pitcher-roster-table th.group-head {
+  text-align: left;
+}
+
 .roster-hitter-table {
+  min-width: 1350px;
+}
+
+.roster-hitter-table.first-team-roster-table {
   min-width: 1350px;
 }
 
@@ -1287,6 +1372,10 @@ th.num {
 }
 
 .pitcher-roster-table {
+  min-width: 1920px;
+}
+
+.pitcher-roster-table.first-team-roster-table {
   min-width: 1920px;
 }
 
@@ -1722,6 +1811,14 @@ th.num {
     padding: 10px;
   }
 
+  .game-card {
+    padding: 7px;
+  }
+
+  .game-card strong {
+    font-size: 13px;
+  }
+
   .game-detail-summary {
     grid-template-columns: 1fr;
   }
@@ -1748,6 +1845,18 @@ th.num {
 
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cache-detail {
+    display: flex;
+    flex-wrap: nowrap;
+    max-width: 100%;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .cache-pill {
+    flex: 0 0 auto;
   }
 
   .lineup-table {

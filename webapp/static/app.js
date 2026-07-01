@@ -28,6 +28,7 @@ const TODAY_VIEW_OPTIONS = [
   ["fielders", "오늘의 야수", "야수"],
   ["pitchers", "오늘의 투수", "투수"],
 ];
+const TODAY_HITTER_FILTER_LABELS = ["포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수", "지명타자"];
 let loadToken = 0;
 let gameNavToken = 0;
 let autoRefreshTimer = null;
@@ -221,21 +222,21 @@ function setCacheStatus(data, fallback = "") {
   }
 
   const stats = cache.stats || {};
-  const pairs = [
-    ["선수", cache.stored_player_records, stats.player_record_hits, stats.player_record_fetches],
-    ["상대투수", cache.stored_vs_player_stats, stats.vs_player_stats_hits, stats.vs_player_stats_fetches],
-    ["경기로그", cache.stored_player_game_logs, stats.player_game_log_hits, stats.player_game_log_fetches],
-    ["상황", cache.stored_kbo_hitter_situation, stats.kbo_hitter_situation_hits, stats.kbo_hitter_situation_fetches],
-    ["팀상대", cache.stored_team_opponent_records, stats.team_opponent_record_hits, stats.team_opponent_record_fetches],
+  const policyRows = Array.isArray(cache.policy_rows) ? cache.policy_rows : [
+    { label: "선수", stored: cache.stored_player_records, hits: stats.player_record_hits, fetches: stats.player_record_fetches },
+    { label: "상대투수", stored: cache.stored_vs_player_stats, hits: stats.vs_player_stats_hits, fetches: stats.vs_player_stats_fetches },
+    { label: "경기로그", stored: cache.stored_player_game_logs, hits: stats.player_game_log_hits, fetches: stats.player_game_log_fetches },
+    { label: "상황", stored: cache.stored_kbo_hitter_situation, hits: stats.kbo_hitter_situation_hits, fetches: stats.kbo_hitter_situation_fetches },
+    { label: "팀상대", stored: cache.stored_team_opponent_records, hits: stats.team_opponent_record_hits, fetches: stats.team_opponent_record_fetches },
   ];
   const updated = cache.updated_at ? ` · 캐시 ${kstTimeString(cache.updated_at)}` : "";
   cacheLine.innerHTML = `
     <span>${escapeHtml(cache.message || fallback || "성적 캐시 사용 중")}${escapeHtml(updated)}</span>
     <span class="cache-detail">
-      ${pairs.map(([label, stored, hits, fetches]) => `
-        <span class="cache-pill" title="${escapeHtml(label)} 저장 ${intish(stored)}건 · 재사용 ${intish(hits)}건 · 조회 ${intish(fetches)}건">
-          ${escapeHtml(label)} ${escapeHtml(stored ?? 0)}
-          <small>${escapeHtml(hits ?? 0)}/${escapeHtml(fetches ?? 0)}</small>
+      ${policyRows.map((row) => `
+        <span class="cache-pill" title="${escapeHtml(row.policy || row.label || "")} · 저장 ${intish(row.stored)}건 · 재사용 ${intish(row.hits)}건 · 조회 ${intish(row.fetches)}건">
+          ${escapeHtml(row.label)} ${escapeHtml(row.stored ?? 0)}
+          <small>${escapeHtml(row.hits ?? 0)}/${escapeHtml(row.fetches ?? 0)}</small>
         </span>
       `).join("")}
     </span>
@@ -318,6 +319,10 @@ function teamBatting(stats) {
 function teamPitching(stats) {
   if (!stats) return "-";
   return `ERA ${decimal(stats.defenseEra)} WHIP ${decimal(stats.defenseWhip)} QS ${intish(stats.defenseQs)}`;
+}
+
+function teamRecentTen(stats) {
+  return stats?.recentTenGames || stats?.lastFiveGames || "-";
 }
 
 function teamVs(team) {
@@ -1244,6 +1249,21 @@ function renderGameDetailSummary(game) {
   `;
 }
 
+function renderGameWarnings(game) {
+  const warnings = [];
+  if (game?.scoreboard_error) warnings.push(["스코어보드", game.scoreboard_error]);
+  if (game?.live_summary_error) warnings.push(["중계", game.live_summary_error]);
+  if (game?.lineup_error) warnings.push(["라인업", game.lineup_error]);
+  if (!warnings.length) return "";
+  return `
+    <div class="warning-row">
+      ${warnings.map(([label, message]) => `
+        <span class="warning-pill" title="${escapeHtml(message)}">${escapeHtml(label)} 확인 필요</span>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderGameCard(game, data, detail = false) {
   const cardClass = detail ? "game-card game-card-detail" : "game-card";
   const matchupTitle = `${game.away_team || "-"} @ ${game.home_team || "-"}${detail && game.stadium ? ` ${game.stadium}` : ""}`;
@@ -1261,6 +1281,7 @@ function renderGameCard(game, data, detail = false) {
         </div>
       </div>
       ${detail ? renderGameDetailSummary(game) : ""}
+      ${renderGameWarnings(game)}
       ${renderScoreboard(game, detail)}
       ${detail ? "" : renderGameTimeline(game)}
     </article>
@@ -1713,7 +1734,7 @@ function renderTeamOverviewStats(rows) {
             <th>HLD</th>
             <th>SV</th>
             <th>E</th>
-            <th>최근5</th>
+            <th>최근10G</th>
             <th>연속</th>
           </tr>
         </thead>
@@ -1738,7 +1759,7 @@ function renderTeamOverviewStats(rows) {
               ${statCell(count(stats.defenseHold, 2), "hold")}
               ${statCell(count(stats.defenseSave, 2), "save")}
               ${statCell(count(stats.defenseErr, 2), "err")}
-              <td class="stat">${escapeHtml(stats.lastFiveGames || "-")}</td>
+              <td class="stat">${escapeHtml(teamRecentTen(stats))}</td>
               <td>${escapeHtml(stats.continuousGameResult || "-")}</td>
             </tr>
           `).join("")}
@@ -1778,14 +1799,28 @@ function isTodayHitterMatch(player, view) {
 function positionLabel(player, view) {
   const position = displayPosition(player?.position);
   if (view === "pitchers") return "선발투수";
-  if (/외야수/i.test(position)) return "외야수";
-  return position || "야수 기타";
+  if (TODAY_HITTER_FILTER_LABELS.includes(position)) return position;
+
+  const compact = String(player?.position || "").replace(/\s+/g, "");
+  for (let index = compact.length - 1; index >= 0; index -= 1) {
+    const char = compact[index];
+    if (char === "포" || char === "捕") return "포수";
+    if (char === "一" || char === "1") return "1루수";
+    if (char === "二" || char === "2") return "2루수";
+    if (char === "三" || char === "3") return "3루수";
+    if (char === "유" || char === "遊") return "유격수";
+    if (char === "좌" || char === "左") return "좌익수";
+    if (char === "중" || char === "中") return "중견수";
+    if (char === "우" || char === "右") return "우익수";
+    if (char === "지" || char === "指") return "지명타자";
+  }
+  return "야수 기타";
 }
 
 function positionSortOrder(label, view) {
   const order = view === "pitchers"
     ? ["선발투수"]
-    : ["포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수", "외야수", "지명타자", "대타", "대주자", "야수 기타"];
+    : TODAY_HITTER_FILTER_LABELS;
   const index = order.indexOf(label);
   return index === -1 ? order.length : index;
 }
@@ -1853,9 +1888,10 @@ function todaySeasonYear(data) {
 function renderTodayPositionFilter(groups) {
   if (todayView === "pitchers" || !groups.length) return "";
   const total = groups.reduce((sum, group) => sum + group.rows.length, 0);
+  const filterGroups = groups.filter((group) => TODAY_HITTER_FILTER_LABELS.includes(group.label));
   const buttons = [
     { label: "전체", value: "", count: total },
-    ...groups.map((group) => ({ label: group.label, value: group.label, count: group.rows.length })),
+    ...filterGroups.map((group) => ({ label: group.label, value: group.label, count: group.rows.length })),
   ];
   return `
     <div class="today-position-filter" aria-label="포지션별 보기">
@@ -2092,6 +2128,26 @@ function renderTodayPositionSections(groups, currentYear) {
   if (!groups.length) {
     return `<div class="empty-state">표시할 선수 정보가 없습니다.</div>`;
   }
+  if (todayView !== "pitchers") {
+    const visibleGroups = todayPositionFilter
+      ? groups.filter((group) => group.label === todayPositionFilter)
+      : groups.filter((group) => TODAY_HITTER_FILTER_LABELS.includes(group.label));
+    if (!visibleGroups.length) {
+      return `<div class="empty-state">선택한 포지션의 선수 정보가 없습니다.</div>`;
+    }
+    return visibleGroups.map((group) => {
+      const rows = group.rows.slice().sort((a, b) => todayHitterCompare(a, b, currentYear));
+      return `
+      <section class="today-position-section">
+        <div class="table-title">
+          <span>${escapeHtml(group.label)}</span>
+          <small>${escapeHtml(rows.length)}명 · AVG 순</small>
+        </div>
+        ${renderTodayHitterTable(rows, currentYear)}
+      </section>
+    `;
+    }).join("");
+  }
   const visibleGroups = todayPositionFilter && todayView !== "pitchers"
     ? groups.filter((group) => group.label === todayPositionFilter)
     : groups;
@@ -2116,7 +2172,10 @@ function renderTodayLineupView(data) {
   const rows = todayView === "pitchers" ? todayPitcherRows(data) : todayHitterRows(data, todayView);
   const currentYear = todaySeasonYear(data);
   const groups = groupTodayRows(rows, todayView, currentYear);
-  if (todayPositionFilter && !groups.some((group) => group.label === todayPositionFilter)) {
+  if (
+    todayPositionFilter
+    && (!TODAY_HITTER_FILTER_LABELS.includes(todayPositionFilter) || !groups.some((group) => group.label === todayPositionFilter))
+  ) {
     resetTodayPositionFilter();
   }
   const teamCount = new Set(rows.map((row) => row.team?.team_code || row.team?.team_name).filter(Boolean)).size;
@@ -2128,7 +2187,7 @@ function renderTodayLineupView(data) {
             <h2>${escapeHtml(title)}</h2>
             <span class="chip">${escapeHtml(data.target_date)} 라인업</span>
           </div>
-          <div class="status">오늘 라인업 기준으로 포지션별 선수를 모아 표시합니다.</div>
+          <div class="status">오늘 라인업 기준으로 선수를 모아 AVG 순으로 표시합니다.</div>
         </div>
         <div class="record-line">
           <span class="chip">${escapeHtml(teamCount)}팀</span>
@@ -2136,7 +2195,7 @@ function renderTodayLineupView(data) {
         </div>
       </div>
       <section class="team-section">
-        <div class="table-title">${escapeHtml(title)} · 포지션별 · ${todayView === "pitchers" ? "직전경기 / 최근5경기출전 / 올해성적" : "최근5G / 최근10G / 올해성적"}</div>
+        <div class="table-title">${escapeHtml(title)} · ${todayView === "pitchers" ? "직전경기 / 최근5경기출전 / 올해성적" : "AVG 순 · 최근5G / 최근10G / 올해성적"}</div>
         ${renderTodayPositionFilter(groups)}
         ${renderTodayPositionSections(groups, currentYear)}
       </section>
@@ -2352,14 +2411,16 @@ function renderRosterTeamPanel(team, data) {
   const firstTeamError = rosterView === "first" ? team.registered_roster?.error : "";
   const yearColumns = historyYears(data);
   const currentYear = Number(data.season_year || String(data.target_date || "").slice(0, 4));
+  const rosterYearColumns = yearColumns;
   const showHitters = rosterView !== "pitchers";
   const showPitchers = rosterView !== "hitters";
   const sortedHitters = sortedRosterHitters(visibleHitters, currentYear);
   const sortedPitchers = sortedRosterPitchers(visiblePitchers, currentYear);
   const counts = team.roster_counts || { hitters: hitters.length, pitchers: pitchers.length };
-  const hitterColspan = 2 + 5 + (yearColumns.length * 6);
-  const pitcherColspan = 2 + 7 + (yearColumns.length * 11);
+  const hitterColspan = 2 + 5 + (rosterYearColumns.length * 6);
+  const pitcherColspan = 2 + 7 + (rosterYearColumns.length * 11);
   const tableLabel = rosterView === "first" ? "1군 등록" : "엔트리";
+  const rosterHistoryLabel = "최근 3년 성적";
 
   return `
     <article class="team-panel roster-panel selected">
@@ -2382,7 +2443,7 @@ function renderRosterTeamPanel(team, data) {
       <div class="metric-grid">
         <div class="metric"><span>타격</span><strong class="stat">${escapeHtml(teamBatting(stats))}</strong></div>
         <div class="metric"><span>투수</span><strong class="stat">${escapeHtml(teamPitching(stats))}</strong></div>
-        <div class="metric"><span>최근5</span><strong>${escapeHtml(stats.lastFiveGames || "-")}</strong></div>
+        <div class="metric"><span>최근10G</span><strong>${escapeHtml(teamRecentTen(stats))}</strong></div>
         <div class="metric"><span>연속</span><strong>${escapeHtml(stats.continuousGameResult || "-")}</strong></div>
       </div>
 
@@ -2396,15 +2457,15 @@ function renderRosterTeamPanel(team, data) {
       ` : ""}
 
       <section class="team-section section-recent"${showHitters ? "" : " hidden"}>
-        <div class="table-title">타자 ${escapeHtml(tableLabel)} · AVG 순 · 최근10G / 최근 3년 성적${firstTeamError ? ` · ${escapeHtml(firstTeamError)}` : ""}</div>
+        <div class="table-title">타자 ${escapeHtml(tableLabel)} · AVG 순 · 최근10G / ${escapeHtml(rosterHistoryLabel)}${firstTeamError ? ` · ${escapeHtml(firstTeamError)}` : ""}</div>
         <div class="table-scroll">
-          <table class="lineup-table recent-season-table roster-table roster-hitter-table">
+          <table class="lineup-table recent-season-table roster-table roster-hitter-table${rosterView === "first" ? " first-team-roster-table" : ""}">
             <thead>
               <tr>
                 <th class="num" rowspan="2">순</th>
                 <th rowspan="2">선수</th>
                 <th class="group-head" colspan="5">최근10G</th>
-                ${yearColumns.map((year) => `<th class="group-head" colspan="6">${escapeHtml(shortSeasonYear(year))}년 성적</th>`).join("")}
+                ${rosterYearColumns.map((year) => `<th class="group-head" colspan="6">${escapeHtml(shortSeasonYear(year))}년 성적</th>`).join("")}
               </tr>
               <tr class="sub-head">
                 <th class="stat-focus">AVG</th>
@@ -2412,7 +2473,7 @@ function renderRosterTeamPanel(team, data) {
                 <th>OPS</th>
                 <th>HR</th>
                 <th>RBI</th>
-                ${yearColumns.map(() => `
+                ${rosterYearColumns.map(() => `
                   <th class="stat-focus">AVG</th>
                   <th>AB</th>
                   <th>OPS</th>
@@ -2423,22 +2484,22 @@ function renderRosterTeamPanel(team, data) {
               </tr>
             </thead>
             <tbody>
-              ${sortedHitters.map((player, index) => renderRosterHitterRow(player, yearColumns, index + 1)).join("") || `<tr><td colspan="${escapeHtml(hitterColspan)}" class="empty-state">타자 정보 없음</td></tr>`}
+              ${sortedHitters.map((player, index) => renderRosterHitterRow(player, rosterYearColumns, index + 1)).join("") || `<tr><td colspan="${escapeHtml(hitterColspan)}" class="empty-state">타자 정보 없음</td></tr>`}
             </tbody>
           </table>
         </div>
       </section>
 
       <section class="team-section section-matchup"${showPitchers ? "" : " hidden"}>
-        <div class="table-title">투수 ${escapeHtml(tableLabel)} · ERA 순 · 최근10G / 최근 3년 성적${firstTeamError ? ` · ${escapeHtml(firstTeamError)}` : ""}</div>
+        <div class="table-title">투수 ${escapeHtml(tableLabel)} · ERA 순 · 최근10G / ${escapeHtml(rosterHistoryLabel)}${firstTeamError ? ` · ${escapeHtml(firstTeamError)}` : ""}</div>
         <div class="table-scroll">
-          <table class="lineup-table pitcher-roster-table roster-table">
+          <table class="lineup-table pitcher-roster-table roster-table${rosterView === "first" ? " first-team-roster-table" : ""}">
             <thead>
               <tr>
                 <th class="num" rowspan="2">순</th>
                 <th rowspan="2">선수</th>
                 <th class="group-head" colspan="7">최근10G</th>
-                ${yearColumns.map((year) => `<th class="group-head" colspan="11">${escapeHtml(shortSeasonYear(year))}년 성적</th>`).join("")}
+                ${rosterYearColumns.map((year) => `<th class="group-head" colspan="11">${escapeHtml(shortSeasonYear(year))}년 성적</th>`).join("")}
               </tr>
               <tr class="sub-head">
                 <th>G</th>
@@ -2448,7 +2509,7 @@ function renderRosterTeamPanel(team, data) {
                 <th>HR</th>
                 <th>BB</th>
                 <th>K</th>
-                ${yearColumns.map(() => `
+                ${rosterYearColumns.map(() => `
                   <th>G</th>
                   <th class="stat-focus">ERA</th>
                   <th>IP</th>
@@ -2464,7 +2525,7 @@ function renderRosterTeamPanel(team, data) {
               </tr>
             </thead>
             <tbody>
-              ${sortedPitchers.map((player, index) => renderRosterPitcherRow(player, yearColumns, index + 1)).join("") || `<tr><td colspan="${escapeHtml(pitcherColspan)}" class="empty-state">투수 정보 없음</td></tr>`}
+              ${sortedPitchers.map((player, index) => renderRosterPitcherRow(player, rosterYearColumns, index + 1)).join("") || `<tr><td colspan="${escapeHtml(pitcherColspan)}" class="empty-state">투수 정보 없음</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -2473,21 +2534,8 @@ function renderRosterTeamPanel(team, data) {
   `;
 }
 
-function renderTeamPanel(team, data) {
-  if (data.view_mode === "team_roster" || team.roster_mode) {
-    return renderRosterTeamPanel(team, data);
-  }
-
-  const selectedCode = data.selected_team?.team_code;
-  const className = selectedCode
-    ? team.team_code === selectedCode ? "selected" : "opponent"
-    : team.side === "away" ? "selected" : "opponent";
-  const stats = team.team_season || {};
-  const batters = Array.isArray(team.batting_order) ? team.batting_order : [];
+function teamPitcherLineData(team) {
   const pitcher = team.starting_pitcher || {};
-  const opponentName = team.opponent?.team_name || "상대팀";
-  const matchupPitcher = matchupPitcherForTeam(team, batters, data);
-  const matchupPitcherLabel = matchupPitcher.role === "current" ? "상대 현재 투수" : "상대 선발";
   const currentPitcher = team.current_pitcher?.name ? team.current_pitcher : null;
   const reliefPitchers = Array.isArray(team.relief_pitchers) ? team.relief_pitchers : [];
   const pitcherLinePlayers = [];
@@ -2504,10 +2552,104 @@ function renderTeamPanel(team, data) {
   ) {
     pitcherLinePlayers.push(currentPitcher);
   }
+  return {
+    pitcher,
+    currentPitcher,
+    pitcherLinePlayers,
+    count: 1 + pitcherLinePlayers.length,
+  };
+}
+
+function renderPitcherSpacerLines(count) {
+  if (count <= 0) return "";
+  return Array.from({ length: count }, () => `
+    <div class="pitcher-line pitcher-line-spacer" aria-hidden="true">
+      <div>
+        <div class="subtle">-</div>
+        <div class="pitcher-name">-</div>
+      </div>
+      <div class="stat">-</div>
+      <div class="stat">-</div>
+    </div>
+  `).join("");
+}
+
+function lineupRowCount(batters) {
+  return batters.reduce((sum, batter) => sum + lineupEntries(batter).length, 0);
+}
+
+function renderTableSpacerRows(count, colspan) {
+  if (count <= 0) return "";
+  return Array.from({ length: count }, () => `
+    <tr class="table-spacer-row" aria-hidden="true">
+      <td colspan="${escapeHtml(colspan)}">&nbsp;</td>
+    </tr>
+  `).join("");
+}
+
+function pitcherHandAvg(pitcher, side) {
+  return avg(pitcher?.vs_batter_hand?.[side]?.avg);
+}
+
+function renderPitcherHandednessTable(pitcherData, spacerCount) {
+  const rows = [
+    { label: "선발", pitcher: pitcherData.pitcher, current: false },
+    ...pitcherData.pitcherLinePlayers.map((pitcher) => ({
+      label: "교체",
+      pitcher,
+      current: Boolean(pitcherData.currentPitcher && samePitcher(pitcher, pitcherData.currentPitcher)),
+    })),
+  ];
+  return `
+    <div class="table-scroll">
+      <table class="lineup-table pitcher-hand-table">
+        <thead>
+          <tr>
+            <th>구분</th>
+            <th>투수</th>
+            <th class="stat-focus">vs 좌타 AVG</th>
+            <th class="stat-focus">vs 우타 AVG</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr${row.current ? ' class="current-pitcher-row"' : ""}>
+              <td>${escapeHtml(row.current ? "현재" : row.label)}</td>
+              <td class="player">${playerName(row.pitcher)}</td>
+              <td class="stat number-stat stat-avg">${escapeHtml(pitcherHandAvg(row.pitcher, "left"))}</td>
+              <td class="stat number-stat stat-avg">${escapeHtml(pitcherHandAvg(row.pitcher, "right"))}</td>
+            </tr>
+          `).join("") || `<tr><td colspan="4" class="empty-state">투수 정보 없음</td></tr>`}
+          ${renderTableSpacerRows(spacerCount, 4)}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderTeamPanel(team, data, options = {}) {
+  if (data.view_mode === "team_roster" || team.roster_mode) {
+    return renderRosterTeamPanel(team, data);
+  }
+
+  const selectedCode = data.selected_team?.team_code;
+  const className = selectedCode
+    ? team.team_code === selectedCode ? "selected" : "opponent"
+    : team.side === "away" ? "selected" : "opponent";
+  const stats = team.team_season || {};
+  const batters = Array.isArray(team.batting_order) ? team.batting_order : [];
+  const opponentName = team.opponent?.team_name || "상대팀";
+  const matchupPitcher = matchupPitcherForTeam(team, batters, data);
+  const matchupPitcherLabel = matchupPitcher.role === "current" ? "상대 현재 투수" : "상대 선발";
+  const pitcherData = teamPitcherLineData(team);
+  const { pitcher, currentPitcher, pitcherLinePlayers } = pitcherData;
   const yearColumns = historyYears(data);
   const currentYear = Number(data.season_year || String(data.target_date || "").slice(0, 4));
   const contextPlayer = contextHeaderPlayer(batters);
   const contextColspan = 2 + 2 + 2 + contextAvgOnlyColumns.length;
+  const showMatchupSections = Boolean(data.selected_game);
+  const pitcherSpacerCount = Math.max(0, (options.pitcherLineMin || 0) - pitcherData.count);
+  const batterSpacerCount = Math.max(0, (options.batterRowMin || 0) - lineupRowCount(batters));
   const pitcherLines = [
     renderPitcherLine(pitcher, "선발투수", pitcher),
     ...pitcherLinePlayers.map((reliever) => renderPitcherLine(
@@ -2516,6 +2658,7 @@ function renderTeamPanel(team, data) {
       pitcher,
       Boolean(currentPitcher && samePitcher(reliever, currentPitcher)),
     )),
+    renderPitcherSpacerLines(pitcherSpacerCount),
   ].join("");
 
   return `
@@ -2537,17 +2680,19 @@ function renderTeamPanel(team, data) {
       <div class="metric-grid">
         <div class="metric"><span>타격</span><strong class="stat">${escapeHtml(teamBatting(stats))}</strong></div>
         <div class="metric"><span>투수</span><strong class="stat">${escapeHtml(teamPitching(stats))}</strong></div>
-        <div class="metric"><span>최근5</span><strong>${escapeHtml(stats.lastFiveGames || "-")}</strong></div>
+        <div class="metric"><span>최근10G</span><strong>${escapeHtml(teamRecentTen(stats))}</strong></div>
         <div class="metric"><span>연속</span><strong>${escapeHtml(stats.continuousGameResult || "-")}</strong></div>
       </div>
 
       <div class="pitcher-stack">${pitcherLines}</div>
 
+      ${showMatchupSections ? `
       <div class="mobile-section-tabs" aria-label="표 전환">
         <button class="section-tab" type="button" data-section="recent">최근/올해</button>
         <button class="section-tab" type="button" data-section="matchup">매치업</button>
         <button class="section-tab" type="button" data-section="history">3년</button>
       </div>
+      ` : ""}
 
       <section class="team-section section-recent">
         <div class="table-title">오늘 / 최근10G / ${escapeHtml(currentYear)}년 성적</div>
@@ -2579,13 +2724,20 @@ function renderTeamPanel(team, data) {
             </thead>
             <tbody>
               ${batters.map((batter) => renderRecentSeasonRows(batter, currentYear)).join("") || `<tr><td colspan="15" class="empty-state">라인업 정보 없음</td></tr>`}
+              ${renderTableSpacerRows(batterSpacerCount, 15)}
             </tbody>
           </table>
         </div>
       </section>
 
+      ${showMatchupSections ? `
       <section class="team-section section-matchup">
         <div class="table-title">매치업 기록</div>
+        ${renderPitcherHandednessTable(pitcherData, pitcherSpacerCount)}
+
+        <div class="table-title context-title">
+          <span>타자 매치업</span>
+        </div>
         <div class="table-scroll">
           <table class="lineup-table matchup-table">
             <thead>
@@ -2611,6 +2763,7 @@ function renderTeamPanel(team, data) {
             </thead>
             <tbody>
               ${batters.map(renderMatchupRows).join("") || `<tr><td colspan="13" class="empty-state">라인업 정보 없음</td></tr>`}
+              ${renderTableSpacerRows(batterSpacerCount, 13)}
             </tbody>
           </table>
         </div>
@@ -2637,11 +2790,14 @@ function renderTeamPanel(team, data) {
             </thead>
             <tbody>
               ${batters.map((batter) => renderContextMatchupRows(batter, currentYear)).join("") || `<tr><td colspan="${escapeHtml(contextColspan)}" class="empty-state">상황별 기록 없음</td></tr>`}
+              ${renderTableSpacerRows(batterSpacerCount, contextColspan)}
             </tbody>
           </table>
         </div>
       </section>
+      ` : ""}
 
+      ${showMatchupSections ? `
       <section class="team-section section-history">
         <details class="history">
           <summary>최근 3년 시즌 흐름</summary>
@@ -2666,11 +2822,13 @@ function renderTeamPanel(team, data) {
               </thead>
               <tbody>
                 ${batters.map((batter) => renderHistoryRows(batter, yearColumns)).join("")}
+                ${renderTableSpacerRows(batterSpacerCount, 2 + (yearColumns.length * 6))}
               </tbody>
             </table>
           </div>
         </details>
       </section>
+      ` : ""}
     </article>
   `;
 }
@@ -2678,6 +2836,8 @@ function renderTeamPanel(team, data) {
 function renderTeams(data) {
   const teams = data.teams || [];
   teamsRoot.dataset.mobileSection = teamsRoot.dataset.mobileSection || "recent";
+  teamsRoot.dataset.viewMode = data.view_mode || "";
+  teamsRoot.dataset.aggregateGame = data.view_mode === "game_lineups" && !data.selected_game ? "true" : "false";
   if (todayView) {
     teamsRoot.dataset.mobileSection = "recent";
     teamsRoot.innerHTML = renderTodayLineupView(data);
@@ -2694,12 +2854,25 @@ function renderTeams(data) {
     if (rosterView === "hitters") teamsRoot.dataset.mobileSection = "recent";
     if (rosterView === "pitchers") teamsRoot.dataset.mobileSection = "matchup";
   }
+  if (
+    data.view_mode === "game_lineups"
+    && !data.selected_game
+    && ["matchup", "history"].includes(teamsRoot.dataset.mobileSection)
+  ) {
+    teamsRoot.dataset.mobileSection = "recent";
+  }
   if (!teams.length) {
     const hasCancelledGame = (data.games || []).some((game) => isCancelledGame(game));
     teamsRoot.innerHTML = `<div class="empty-state">${hasCancelledGame ? "취소된 경기입니다." : "표시할 팀 정보가 없습니다."}</div>`;
     return;
   }
-  teamsRoot.innerHTML = teams.map((team) => renderTeamPanel(team, data)).join("");
+  const pitcherLineMin = data.selected_game
+    ? Math.max(...teams.map((team) => teamPitcherLineData(team).count))
+    : 0;
+  const batterRowMin = data.selected_game
+    ? Math.max(...teams.map((team) => lineupRowCount(Array.isArray(team.batting_order) ? team.batting_order : [])))
+    : 0;
+  teamsRoot.innerHTML = teams.map((team) => renderTeamPanel(team, data, { pitcherLineMin, batterRowMin })).join("");
 }
 
 function setMobileSection(section) {

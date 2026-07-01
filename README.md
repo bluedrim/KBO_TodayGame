@@ -24,6 +24,8 @@ KBO 오늘 경기의 라인업, 경기 상황, 선수 성적, 팀 기록을 한 
 ├── run_kbo.sh              # 실행 스크립트
 ├── run_kbo.bat             # Windows 실행 스크립트
 ├── kbo_lineups.py          # CLI 조회 프로그램
+├── scripts/
+│   └── check_kbo.py        # 로컬 검증 스크립트
 ├── webapp/
 │   ├── server.py           # 로컬 웹 서버/API
 │   └── static/
@@ -193,6 +195,16 @@ GET /api/lineups?date=YYYY-MM-DD&team=__teams__
 GET /api/network
 ```
 
+## 검증
+
+서버 수정 뒤에는 아래 명령으로 Python/JavaScript 문법과 로컬 API 기본 응답을 확인할 수 있습니다.
+
+```bash
+python3 scripts/check_kbo.py
+```
+
+로컬 서버가 실행 중이 아니면 API 확인은 건너뛰고 문법 검사만 수행합니다.
+
 ## 웹 접속이 안 될 때
 
 - 실행 스크립트에 표시된 IP 주소와 포트가 맞는지 확인합니다.
@@ -235,6 +247,8 @@ It reads public data from Naver Sports and KBO record pages, then caches repeate
 ├── run_kbo.sh              # macOS/Linux runner
 ├── run_kbo.bat             # Windows runner
 ├── kbo_lineups.py          # CLI program
+├── scripts/
+│   └── check_kbo.py        # local check script
 ├── webapp/
 │   ├── server.py           # local web server/API
 │   └── static/
@@ -393,6 +407,16 @@ GET /api/lineups?date=YYYY-MM-DD&team=NC
 GET /api/lineups?date=YYYY-MM-DD&team=__teams__
 GET /api/network
 ```
+
+## Checks
+
+After changing the server or frontend, run:
+
+```bash
+python3 scripts/check_kbo.py
+```
+
+If the local web server is not running, API checks are skipped and syntax checks still run.
 
 ## Troubleshooting Web Access
 
